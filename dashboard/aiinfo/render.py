@@ -22,7 +22,7 @@ import math
 import re
 from datetime import datetime
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from .fonts import book_for
 from .sources import clean_text, crypto_source_label, effective_wind_level
@@ -431,64 +431,186 @@ class Renderer:
 
     # ---- 天气图标（纯几何绘制，不依赖字体里的符号）----------------------
 
-    def icon(self, cx: float, cy: float, size: float, kind: str, fill=INK) -> None:
-        """一个图标最多一个附加符号。
+    #: 云体填充的灰阶。不能是白（看不出形状），更不能是黑（一坨疙瘩 + 残影）
+    CLOUD_BODY = 210
 
-        小尺寸下符号越多越糊，"晴间多云还带五条短射线"缩到 34px 就是一团黑点。
-        所以只保留 6 种画法：晴 / 多云 / 阴 / 雨 / 雪 / 雷，认不出的一律按阴画。
+    def _stamp_icon(self, cx: float, cy: float, size: float,
+                    silhouette, solid=None) -> None:
+        """把图标画在自己的小画布上再贴回去。
+
+        剪影只描述形状，轮廓和填充由这里统一生成：
+        先取剪影、腐蚀一圈得到内部，两者相减就是宽度恒定的描边。
+        这样做的原因是**并集没法直接描边** —— 云是三个圆加一个底矩形，
+        逐个画 outline 会在内部留下一圈圈弧线，比实心黑还难看。
         """
-        r = size / 2.0
-        lw = max(2, int(round(size * 0.10)))
-        kind = str(kind or "cloud").lower()
+        side = int(max(10, round(size * 1.7)))
+        lw = max(2, int(round(size * 0.055)))
+        mask = Image.new("L", (side, side), 0)
+        silhouette(ImageDraw.Draw(mask), side)
+        inner = mask.filter(ImageFilter.MinFilter(lw * 2 + 1))
+        edge = ImageChops.subtract(mask, inner)
+        body = Image.new("L", (side, side), 255)
+        body.paste(self.CLOUD_BODY, (0, 0), inner)
+        body.paste(INK, (0, 0), edge)
+        x0 = int(round(cx - side / 2))
+        y0 = int(round(cy - side / 2))
+        self.img.paste(body, (x0, y0), mask)
+        if solid is not None:                   # 实心件（雨点、闪电、太阳光芒）直接压黑
+            s = Image.new("L", (side, side), 0)
+            solid(ImageDraw.Draw(s), side)
+            self.img.paste(INK, (x0, y0), s)
 
-        def cloud(ox: float, oy: float, scale: float) -> None:
-            a = size * scale
-            self.d.ellipse([ox - a * 0.50, oy - a * 0.30, ox + a * 0.10, oy + a * 0.28], fill=fill)
-            self.d.ellipse([ox - a * 0.14, oy - a * 0.52, ox + a * 0.44, oy + a * 0.20], fill=fill)
-            self.d.ellipse([ox + a * 0.12, oy - a * 0.22, ox + a * 0.62, oy + a * 0.28], fill=fill)
-            self.d.rectangle([ox - a * 0.48, oy + a * 0.02, ox + a * 0.60, oy + a * 0.27], fill=fill)
+    #: 夜里不能画太阳。数据里一直有 is_day，只是没人读它。
+    NIGHT_ICON = {"sun": "moon", "sun_cloud": "moon_cloud"}
+
+    def night_kind(self, kind, weather: dict):
+        """把白天的图标换成对应夜间的。
+
+        只在 `is_day` 明确是 0 时换 —— 拿不到这个字段（比如某些源没给）就当白天，
+        别猜。猜错的代价是晚上画个月亮出来，比白天画个月亮好认。
+        """
+        if (weather or {}).get("is_day") in (0, "0", False):
+            return self.NIGHT_ICON.get(str(kind or "").lower(), kind)
+        return kind
+
+    def icon(self, cx: float, cy: float, size: float, kind: str, fill=INK) -> None:
+        """天气图标。
+
+        旧版所有部件都是实心黑：云 = 三个实心椭圆 + 一个矩形，在 124px 的
+        主图里就是一坨黑疙瘩；雨是三条 12px 粗竖线，缩到小尺寸看着像"≡"；
+        而且墨水屏上大面积实心会留残影。现在统一成「恒定宽度的轮廓 + 浅灰云体」，
+        雨点改成细斜线并带圆头。
+
+        一个图标最多一个附加符号 —— 小尺寸下符号越多越糊。认不出的一律按阴画。
+        """
+        kind = str(kind or "cloud").lower()
+        R = size / 2.0
+
+        def cloud_paint(d, a: float, ox: float, oy: float):
+            """画一朵云的剪影（并集，交给 _stamp_icon 去生成轮廓）"""
+            def e(x0, y0, x1, y1):
+                d.ellipse([ox + x0 * a, oy + y0 * a, ox + x1 * a, oy + y1 * a], fill=255)
+            e(-0.50, -0.24, 0.10, 0.26)          # 左峰
+            e(-0.16, -0.46, 0.40, 0.18)          # 中峰（最高）
+            e(0.02, -0.20, 0.56, 0.26)           # 右峰
+            d.rectangle([ox - 0.48 * a, oy + 0.02 * a,
+                         ox + 0.55 * a, oy + 0.26 * a], fill=255)   # 平底
+
+        def drops(d, side, n=3, slant=0.16, long=0.30):
+            """细斜雨丝，两端补圆 —— Pillow 的 line 没有圆头，方头在小尺寸下显脏。"""
+            c = side / 2
+            w = max(2, int(round(size * 0.055)))
+            for i in range(n):
+                x = c + (-0.30 + i * 0.30) * R
+                y0 = c + 0.30 * R
+                y1 = y0 + long * R
+                d.line([x, y0, x + slant * R, y1], fill=255, width=w)
+                for yy in (y0, y1):
+                    d.ellipse([x - w / 2, yy - w / 2, x + w / 2, yy + w / 2], fill=255)
+                d.line([x + slant * R, y1, x + slant * R, y1], fill=255, width=w)
 
         if kind == "sun":
-            sun_r = r * 0.46
-            self.d.ellipse([cx - sun_r, cy - sun_r, cx + sun_r, cy + sun_r], fill=fill)
-            for i in range(8):
-                ang = math.radians(i * 45)
-                self.d.line([cx + math.cos(ang) * r * 0.68, cy + math.sin(ang) * r * 0.68,
-                             cx + math.cos(ang) * r * 0.98, cy + math.sin(ang) * r * 0.98],
-                            fill=fill, width=lw)
+            # 太阳保持实心，但盘小、芒细 —— 它本来就是"亮"，用灰反而没有精神
+            sun_r = R * 0.34
+            lw = max(2, int(round(size * 0.055)))
+
+            def sol(d, side, sun_r=sun_r, lw=lw):
+                c = side / 2
+                d.ellipse([c - sun_r, c - sun_r, c + sun_r, c + sun_r], fill=255)
+                for i in range(8):
+                    ang = math.radians(i * 45)
+                    d.line([c + math.cos(ang) * sun_r * 1.55, c + math.sin(ang) * sun_r * 1.55,
+                            c + math.cos(ang) * sun_r * 2.25, c + math.sin(ang) * sun_r * 2.25],
+                           fill=255, width=lw)
+            self._stamp_icon(cx, cy, size, lambda d, side: None, sol)
+
         elif kind == "sun_cloud":
-            # 太阳露一角、云压住左下——比"太阳 + 短射线"好认得多
-            sun_r = r * 0.34
-            sx, sy = cx - r * 0.30, cy - r * 0.32
-            self.d.ellipse([sx - sun_r, sy - sun_r, sx + sun_r, sy + sun_r], fill=fill)
-            cloud(cx + r * 0.18, cy + r * 0.26, 0.94)
+            sun_r = R * 0.30
+
+            def sil(d, side):
+                c = side / 2
+                cloud_paint(d, R * 0.92, c + R * 0.16, c + R * 0.22)
+            def sol(d, side):
+                c = side / 2
+                sx, sy = c - R * 0.34, c - R * 0.34
+                d.ellipse([sx - sun_r, sy - sun_r, sx + sun_r, sy + sun_r], fill=255)
+                for i in range(5):                       # 只露左上那半圈光芒
+                    ang = math.radians(180 + i * 22.5)
+                    d.line([sx + math.cos(ang) * sun_r * 1.5, sy + math.sin(ang) * sun_r * 1.5,
+                            sx + math.cos(ang) * sun_r * 2.1, sy + math.sin(ang) * sun_r * 2.1],
+                           fill=255, width=max(2, int(round(size * 0.05))))
+            self._stamp_icon(cx, cy, size, sil, sol)
+
+        elif kind in ("moon", "moon_cloud"):
+            # 夜里没有太阳可画。is_day 一直在天气数据里，只是以前没人读，
+            # 于是晚上十点屏幕上还是个太阳。
+            mr = R * (0.42 if kind == "moon" else 0.30)
+
+            def crescent(d, cxx, cyy):
+                """实心盘再挖掉一个偏心圆 —— 在掩膜上画 0 就能刻出月牙。"""
+                d.ellipse([cxx - mr, cyy - mr, cxx + mr, cyy + mr], fill=255)
+                cut = mr * 0.94
+                dx, dy = cxx + mr * 0.52, cyy - mr * 0.46
+                d.ellipse([dx - cut, dy - cut, dx + cut, dy + cut], fill=0)
+
+            if kind == "moon":
+                def sol(d, side, mr=mr):
+                    crescent(d, side / 2, side / 2)
+                self._stamp_icon(cx, cy, size, lambda d, side: None, sol)
+            else:
+                def sil(d, side):
+                    c = side / 2
+                    cloud_paint(d, R * 0.92, c + R * 0.16, c + R * 0.22)
+                def sol(d, side, mr=mr):
+                    c = side / 2
+                    crescent(d, c - R * 0.34, c - R * 0.34)
+                self._stamp_icon(cx, cy, size, sil, sol)
+
         elif kind == "cloud":
-            cloud(cx, cy, 1.0)
-        elif kind in ("rain", "rain_heavy", "shower", "drizzle"):
-            cloud(cx, cy - r * 0.30, 0.98)
-            for i in range(3):
-                x = cx - r * 0.40 + i * (r * 0.40)
-                self.d.line([x, cy + r * 0.20, x, cy + r * 0.84], fill=fill, width=lw)
+            def sil(d, side):
+                cloud_paint(d, R * 1.05, side / 2, side / 2)
+            self._stamp_icon(cx, cy, size, sil)
+
+        elif kind in ("rain", "shower", "drizzle"):
+            long = 0.42 if kind == "shower" else (0.20 if kind == "drizzle" else 0.30)
+
+            def sil(d, side):
+                cloud_paint(d, R * 0.98, side / 2, side / 2 - R * 0.26)
+            self._stamp_icon(cx, cy, size, sil,
+                             lambda d, side: drops(d, side, 3, 0.16, long))
+
         elif kind == "snow":
-            cloud(cx, cy - r * 0.30, 0.98)
-            dot = lw
-            for i in range(3):
-                x = cx - r * 0.40 + i * (r * 0.40)
-                self.d.ellipse([x - dot, cy + r * 0.52 - dot, x + dot, cy + r * 0.52 + dot],
-                               fill=fill)
+            def sil(d, side):
+                cloud_paint(d, R * 0.98, side / 2, side / 2 - R * 0.26)
+            def sol(d, side):
+                c = side / 2
+                rr = max(2, int(round(size * 0.05)))
+                for i in range(3):
+                    x = c + (-0.30 + i * 0.30) * R
+                    y = c + 0.42 * R
+                    d.ellipse([x - rr, y - rr, x + rr, y + rr], fill=255)
+            self._stamp_icon(cx, cy, size, sil, sol)
+
         elif kind == "thunder":
-            cloud(cx, cy - r * 0.34, 0.98)
-            self.d.polygon([
-                (cx + r * 0.06, cy + r * 0.06), (cx - r * 0.34, cy + r * 0.60),
-                (cx - r * 0.02, cy + r * 0.60), (cx - r * 0.24, cy + r * 1.02),
-                (cx + r * 0.36, cy + r * 0.40), (cx + r * 0.04, cy + r * 0.40),
-                (cx + r * 0.34, cy + r * 0.06),
-            ], fill=fill)
+            def sil(d, side):
+                cloud_paint(d, R * 0.98, side / 2, side / 2 - R * 0.30)
+            def sol(d, side):
+                c = side / 2
+                d.polygon([(c + R * 0.10, c + R * 0.20), (c - R * 0.22, c + R * 0.62),
+                           (c + R * 0.02, c + R * 0.62), (c - R * 0.10, c + R * 0.98),
+                           (c + R * 0.30, c + R * 0.50), (c + R * 0.08, c + R * 0.50),
+                           (c + R * 0.32, c + R * 0.20)], fill=255)
+            self._stamp_icon(cx, cy, size, sil, sol)
+
         else:                                                   # fog / 认不出来
-            for i, dy in enumerate((-0.44, 0.0, 0.44)):
-                half = r * (0.98 if i != 1 else 0.70)
-                self.d.line([cx - half, cy + r * dy, cx + half, cy + r * dy],
-                            fill=fill, width=lw)
+            def sol(d, side):
+                c = side / 2
+                w = max(2, int(round(size * 0.06)))
+                for i, dy in enumerate((-0.36, -0.06, 0.24)):
+                    half = R * (0.62 if i % 2 else 0.86)
+                    d.line([c - half, c + R * dy, c + half, c + R * dy],
+                           fill=255, width=w)
+            self._stamp_icon(cx, cy, size, lambda d, side: None, sol)
 
     # =====================================================================
     #  顶部：撕页日历条（农历 / 节气 / 节日 / 宜忌）+ 时钟
@@ -811,7 +933,7 @@ class Renderer:
         body_top = top + g["body_top"]
         icon_size = g["icon_size"]
         self.icon(inner_x + icon_size / 2, body_top + g["body_h"] / 2, icon_size,
-                  weather.get("icon", "cloud"))
+                  self.night_kind(weather.get("icon", "cloud"), weather))
 
         text_x = inner_x + icon_size + self.px(22)
         left_w = right_x - (self.margin + pad)
