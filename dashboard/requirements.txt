@@ -1,0 +1,5 @@
+# 云端出图服务（dashboard/app.py）的依赖。
+# 刻意保持极简：整个项目只需要这三个库。
+Pillow>=10.0
+PyYAML>=6.0
+requests>=2.31

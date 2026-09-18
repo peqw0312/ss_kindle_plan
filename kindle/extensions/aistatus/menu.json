@@ -1,0 +1,47 @@
+{
+  "name": "AI 信息屏",
+  "items": [
+    {
+      "name": "▶ 启动信息屏",
+      "priority": 1,
+      "action": "bin/start.sh",
+      "refresh": true,
+      "exitmenu": false
+    },
+    {
+      "name": "■ 停止信息屏",
+      "priority": 2,
+      "action": "bin/stop.sh",
+      "refresh": true,
+      "exitmenu": false
+    },
+    {
+      "name": "⟳ 测试下载并刷新一次（排障用）",
+      "priority": 3,
+      "action": "bin/refresh.sh",
+      "refresh": false,
+      "exitmenu": true
+    },
+    {
+      "name": "🕐 时钟贴图自检（真机必做）",
+      "priority": 4,
+      "action": "bin/clock_check.sh",
+      "refresh": false,
+      "exitmenu": true
+    },
+    {
+      "name": "ⓘ 查看设备信息（取分辨率）",
+      "priority": 5,
+      "action": "bin/info.sh",
+      "refresh": false,
+      "exitmenu": true
+    },
+    {
+      "name": "☰ 查看日志",
+      "priority": 6,
+      "action": "bin/log.sh",
+      "refresh": false,
+      "exitmenu": true
+    }
+  ]
+}

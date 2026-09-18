@@ -1,0 +1,245 @@
+# =============================================================================
+#  AI 信息屏 配置文件
+#  改完不用提交，本机的定时任务下一轮生成就会用上新配置（默认每小时一次）
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# ① 位置（影响天气、空气质量和日历条上的城市名）
+#    经纬度去高德/百度/腾讯地图上右键「复制坐标」即可，小数点后 4 位足够
+# -----------------------------------------------------------------------------
+location:
+  name: 杭州 · 临平山
+  latitude: 30.4159      # 临平山
+  longitude: 120.2804
+  timezone: Asia/Shanghai
+
+# -----------------------------------------------------------------------------
+# ② 你的 Kindle 型号（决定输出分辨率，写错会显示不全）
+#    可用值：kindle_pw1 / kindle_pw2 / kindle_pw3 / kindle_pw4 / kindle_pw5 /
+#           kindle_basic / kindle_10 / kindle_11 / kindle_oasis2 / kindle_oasis3 /
+#           kindle_scribe
+#    Paperwhite 3（第七代，2015）= kindle_pw3，分辨率 1072x1448
+#    拿不准就在 Kindle 上跑 `eips -i` 看 xres / yres
+# -----------------------------------------------------------------------------
+device:
+  model: kindle_pw3
+  margin: 48
+
+# -----------------------------------------------------------------------------
+# ③ 网络
+#    剩下的数据源（和风天气 / Open-Meteo / 腾讯 / 新浪）国内都能直连。
+#    本机如果挂着代理，默认**不跟随**——否则国内接口会被绕到境外节点，
+#    轻则变慢、重则被对方按异地 IP 拦掉。
+#    如果你的网络必须走代理才能出网，把它改成 true。
+# -----------------------------------------------------------------------------
+network:
+  use_env_proxy: false
+
+# -----------------------------------------------------------------------------
+# ④ 日历条（屏幕最上面那一条撕页日历）
+#    农历 / 干支 / 节气 / 节日 / 宜忌全部由 dashboard/aiinfo/lunar.py 本地推算，
+#    不联网、不依赖第三方库，断网也能显示正确的农历。
+#    enabled: false 会整条去掉，把空间让给下面的内容
+# -----------------------------------------------------------------------------
+calendar:
+  enabled: true
+  show_yiji: true        # 底部「宜 / 忌 / 冲煞」一行（撕页日历的灵魂）
+  show_ganzhi: true      # 干支纪年与生肖
+
+# -----------------------------------------------------------------------------
+# ⑤ 时钟（日历条右上角那个大字）
+#    style 决定长什么样：
+#      cn12 = 「下午 4:34」  对老人最直白，推荐
+#      en12 = 「4:34 PM」
+#      h24  = 「16:34」
+#
+#    mode 决定这个钟**由谁画**，这是本项目最省事的一处设计：
+#      image = 画进图里。图多久生成一次，钟就最多慢多久 —— 想让它准，就得让
+#              服务端反复重算图，等于为了"看一眼时间"反复拉天气和行情。
+#      local = 图里这块留白，Kindle 用**自己的系统时间**贴一张小图上去。
+#              于是"时间准"和"图多久重算一次"彻底解耦：图一天出四次，
+#              屏幕上每一分钟都是对的，服务端也不用一直拉数据。
+#
+#      ⚠️ local 需要三样东西齐全，缺一样屏幕上就留一块空白：
+#           1. 跑过 python dashboard/tools/make_clock_assets.py（生成精灵图）
+#           2. Kindle 的 config.sh 里 CLOCK_MODE=local
+#           3. 精灵图已拷进 Kindle 的 extensions/aistatus/clock/
+#
+#    另：mode=local 之后，页脚的「更新 HH:MM」变成**图的生成时刻**。
+#    这不是缺陷 —— 一眼就能看出「这是 12:00 那一版的数据」。
+#
+#    font / font_bold 只影响**生成精灵图时**用哪个字体，出图不看这两项。
+#    为什么必须填：云端出图解析到的是 Noto Sans CJK SC，而本机默认会用微软雅黑，
+#    两者字形有差异 —— 时钟会看着像"另一块拼上去的"。
+#    指到本机同族的 Noto 之后，时钟和图上其他字才是同一种字。
+#    路径写错或不存在时生成脚本会直接报错停下，不会默默用别的字体。
+# -----------------------------------------------------------------------------
+clock:
+  style: cn12
+  mode: local
+  font: 'C:\Windows\Fonts\Noto Sans SC (TrueType).otf'
+  font_bold: 'C:\Windows\Fonts\Noto Sans SC Bold (TrueType).otf'
+
+# -----------------------------------------------------------------------------
+# ⑥ 天气
+#    主源：和风天气 —— 国内站点融合实况 + 官方合作数据，带空气质量和灾害预警
+#    兜底：Open-Meteo —— 免 Key、不限量，没配和风的 Key 时自动顶上
+#
+#    和风天气怎么开通（免费，只要手机号或邮箱，不绑卡不实名）：
+#      1. 打开 https://dev.qweather.com 注册，选「免费订阅」
+#      2. 控制台 → 项目管理 → 创建项目（类型选 Web API）
+#      3. 控制台 → 设置 / 项目管理里能看到两个东西，抄到下面：
+#           API Host：形如 xxxxxx.re.qweatherapi.com
+#           API Key ：一串 32 位字符
+#      ⚠️ 旧域名 devapi.qweather.com 已于 2026-01 停服、api.qweather.com 于
+#         2026-06 停服。网上教程大多还写着旧域名，照抄一定失败。
+#      ⚠️ API Key 也可以放到环境变量 QWEATHER_KEY 里，那样这个文件就不用写 key。
+# -----------------------------------------------------------------------------
+weather:
+  enabled: true
+  provider: qweather     # qweather | openmeteo
+  days: 4                # 含今天，最多 7（和风只有 3 天 / 7 天两档，会自动挑）
+  show_air: true         # 空气质量
+  show_warning: true     # 有气象灾害预警时，顶掉日历条上的节气进度，优先显示预警
+  qweather:
+    api_host: ""         # ← 填控制台给你的专属 API Host，例如 abcdef.re.qweatherapi.com
+    api_key: ""          # ← 填 API Key；也可以改用环境变量 QWEATHER_KEY
+
+# -----------------------------------------------------------------------------
+# ⑦ 今日速览（**默认关闭**）
+#    关掉之后不再抓 RSS、不再调用任何模型，屏幕只剩 日历 + 天气 + 行情。
+#    想开回来：把 enabled 改成 true 就行，下面的栏目和源都还在。
+#    开启时要额外准备一个模型入口（endpoint / model），否则会自动降级成
+#    「直接显示原始标题」。
+#
+#    ⚠️ 下面的 endpoint 指向 **GitHub Models**，需要 GitHub token。
+#       本项目已经不走 GitHub 了（见 README「关于云端方案」），所以
+#       真要开速览的话，得先确认这条路在你这台机器上通，或者换成
+#       国内可直连的模型接口（把 endpoint 和 model 一起改掉）。
+# -----------------------------------------------------------------------------
+digest:
+  enabled: false
+  title: "今日速览"
+  items: 3                # = 栏目数；版面放不下会自动裁减
+  max_title_lines: 1      # 标题最多几行（1 行 = 6 寸屏上约 24 个字）
+  max_summary_lines: 2    # 摘要最多几行
+  use_ai: true
+  model: openai/gpt-4o-mini
+  endpoint: https://models.github.ai/inference/chat/completions
+  timeout: 60
+  categories:
+    # ---- 栏目一：主流 3A 游戏热文 ----
+    - key: game
+      name: 3A游戏
+      brief: 主流 3A 游戏热文
+      # 关键词命中越多的新闻排得越靠前（标题命中 2 分，摘要命中 1 分）
+      keywords: [PS5, Xbox, Switch, 任天堂, 索尼, 微软, Steam,
+                 发售, 销量, 重制, 预告, 独占, 评测, 3A,
+                 主机, 游戏, DLC, 复刻]
+      feeds:
+        - { name: 机核 GCORES,   url: "https://www.gcores.com/rss" }
+        - { name: 游研社,        url: "https://www.yystv.cn/rss/feed" }
+        - { name: 触乐,          url: "https://www.chuapp.com/feed" }
+        - { name: PC Gamer,      url: "https://www.pcgamer.com/rss/" }
+        - { name: GameSpot,      url: "https://www.gamespot.com/feeds/news/" }
+        - { name: Eurogamer,     url: "https://www.eurogamer.net/feed" }
+        - { name: RockPaperShotgun, url: "https://www.rockpapershotgun.com/feed" }
+        - { name: VGC,           url: "https://www.videogameschronicle.com/feed/" }
+        - { name: GamesIndustry, url: "https://www.gamesindustry.biz/feed" }
+        - { name: Nintendo Life, url: "https://www.nintendolife.com/feeds/news" }
+
+    # ---- 栏目二：AI 行业 ----
+    - key: ai
+      name: AI 行业
+      brief: 人工智能与大模型行业动态
+      keywords: [AI, 人工智能, 大模型, 模型, OpenAI, Anthropic,
+                 Google, DeepMind, 芯片, GPU, 英伟达, NVIDIA,
+                 算力, 智能体, Agent, 开源, 机器人, Claude,
+                 Gemini, GPT, DeepSeek, 推理, 训练]
+      feeds:
+        - { name: 量子位,     url: "https://www.qbitai.com/feed" }
+        - { name: 爱范儿,     url: "https://www.ifanr.com/feed" }
+        - { name: IT之家,     url: "https://www.ithome.com/rss/" }
+        - { name: InfoQ,      url: "https://www.infoq.cn/feed" }
+        - { name: 雷锋网,     url: "https://www.leiphone.com/feed" }
+        - { name: 极客公园,   url: "https://www.geekpark.net/rss" }
+        - { name: Solidot,    url: "https://www.solidot.org/index.rss" }
+        - { name: TechCrunch AI, url: "https://techcrunch.com/category/artificial-intelligence/feed/" }
+        - { name: The Verge AI,  url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml" }
+        - { name: VentureBeat AI, url: "https://venturebeat.com/category/ai/feed/" }
+
+    # ---- 栏目三：中国国内新闻热点 ----
+    - key: cn
+      name: 国内热点
+      brief: 中国国内新闻热点
+      keywords: [中国, 国内, 经济, 政策, 发布, 国务院, 央行,
+                 消费, 就业, 出口, 电网, 高铁, 航天]
+      feeds:
+        - { name: 中国新闻网,   url: "https://www.chinanews.com.cn/rss/scroll-news.xml" }
+        - { name: 中新网要闻,   url: "https://www.chinanews.com.cn/rss/importnews.xml" }
+        - { name: 人民网,       url: "http://www.people.com.cn/rss/politics.xml" }
+        - { name: 新华网,       url: "http://www.xinhuanet.com/politics/news_politics.xml" }
+        - { name: 界面新闻,     url: "https://a.jiemian.com/index.php?m=article&a=rss" }
+
+# -----------------------------------------------------------------------------
+# ⑧ 行情（三列并排，屏幕上没有区块标题，涨跌图例挪到了页脚）
+#    代码格式：sh600519（沪）sz000001（深）bj（北交所）hk00700（港）usAAPL（美）
+#    只写数字也行，程序会按位数和首位猜市场
+#    指数/股票三个数据源依次降级：腾讯 -> 新浪 -> Yahoo
+#    加密合约走了单独一条链路（bitget:/htx: 前缀，代码保留但默认不启用）：
+#      - { code: "bitget:BTCUSDT", name: BTC永续 }
+# -----------------------------------------------------------------------------
+quotes:
+  enabled: true
+  providers: [tencent, sina, yahoo]
+  items:
+    - { code: usNDX,     name: 纳指100 }
+    - { code: usINX,     name: 标普500 }
+    - { code: sh000001,  name: 上证指数 }
+  # 基金：填 6 位基金代码。显示的是当日估值（交易日 9:30-15:00 之间才更新）
+  funds:
+    []
+
+# -----------------------------------------------------------------------------
+# ⑨ 外观微调
+# -----------------------------------------------------------------------------
+display:
+  posterize: 0          # 预览用：填 16 可模拟 16 级灰度屏的观感，正式使用填 0
+
+# -----------------------------------------------------------------------------
+# ⑩ 输出路径（相对仓库根目录）
+#    这两个文件是**本机跑 generate.py 时**的产物，方便你在电脑上直接看图、
+#    或者用局域网那版服务（dashboard/serve.py）发出去。
+#    走云端的话（dashboard/app.py）根本不落盘，图片是在内存里现算现发的，
+#    所以下面这几个路径在云端是无关项。
+# -----------------------------------------------------------------------------
+output:
+  png: docs/dashboard.png
+  html: docs/index.html
+  debug_json: docs/debug.json
+
+# -----------------------------------------------------------------------------
+# ⑪ 云端出图服务（dashboard/app.py）的出图时刻
+#    只在下面这几个时刻重算一张，其余时间把上一张原样发出去。
+#
+#    为什么不再"每 15 分钟"：时间已经交给 Kindle 本机画了（见 ⑤ clock.mode），
+#    图不再需要为了"时间准"而反复重算；天气和指数一天变几次就够了。
+#
+#    时刻按 location.timezone 判定，**不是服务器本地时间** ——
+#    云端容器多半跑在 UTC，照本地时间判会整体偏 8 小时。
+#
+#    为什么偏偏是这四点：
+#      00:05  翻日期。不然每天 00:00-12:00 屏幕上还是昨天的大字日期和农历，
+#             日历条是这块屏的主体，错半天很扎眼。
+#             顺带抓一次美股盘中（夏令时已开盘 1.5 小时，冬令时 2.5 小时）。
+#      05:10  美股收盘。夏令时 04:00 收、冬令时 05:00 收，取两者之**后**，
+#             所以一年到头不用改。少了这一点，整个上午看到的会是 00:05 那个
+#             美股盘中价 —— 既不是收盘价，也不是现价，最尴尬。
+#      12:00  你要的时间点。此时美股当日已收官，拿到的是最终值。
+#      15:05  A 股收盘（沪深 15:00 收）。不然上证会整天停在 11:30 午休前的价。
+#
+#    合计 4 次/天，对比"每 15 分钟"的 96 次，上游调用降了 96%。
+# -----------------------------------------------------------------------------
+cloud:
+  refresh_at: ["00:05", "05:10", "12:00", "15:05"]
+  refresh_minutes: 15     # refresh_at 留空时的兜底间隔（分钟）

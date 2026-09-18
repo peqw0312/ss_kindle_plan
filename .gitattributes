@@ -1,0 +1,11 @@
+# 换行符统一成 LF。
+# 这条对 Kindle 端脚本是硬要求：CRLF 会让 Kindle 上的 sh 报
+# "not found" 或莫名的语法错误，而且非常难排查。
+* text=auto eol=lf
+
+*.sh text eol=lf
+# 这个文件会被 Kindle 上的 sh 直接 source，CRLF 会让 CLOCK_X 变成 "644\r"
+kindle/extensions/aistatus/clock/clock.conf text eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
