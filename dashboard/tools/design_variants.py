@@ -53,7 +53,9 @@ def sample_data() -> dict:
             "source": "Open-Meteo", "icon": "cloud", "temp": 26, "feels": 29,
             "desc": "晴间多云转局部小雨", "humidity": 68, "pop": 13, "precip": 0.4,
             "wind_dir": "北偏东", "wind_level": 2, "uv": 7,
-            "air": {"level": "轻度污染", "aqi": 118},
+            "sunrise": "05:44", "sunset": "18:00", "pressure": 1013,
+            "air": {"level": "轻度污染", "aqi": 118, "pm25": 55, "pm10": 61,
+                    "advice": "减少户外"},
             "forecast": [
                 {"label": "明天", "high": 30, "low": 22, "desc": "毛毛雨"},
                 {"label": "周日", "high": 30, "low": 22, "desc": "晴间多云"},
@@ -61,9 +63,9 @@ def sample_data() -> dict:
             ],
         },
         "quotes": [
-            {"name": "纳指100", "price": 29447.32, "change_pct": 1.73},
-            {"name": "标普500", "price": 7638.10, "change_pct": -1.14},
-            {"name": "上证指数", "price": 3912.55, "change_pct": 0.94},
+            {"name": "纳指100", "price": 29447.32, "pct": 0.0173},
+            {"name": "标普500", "price": 7638.10, "pct": -0.0114},
+            {"name": "上证指数", "price": 3912.55, "pct": 0.0094},
         ],
         "funds": [],
         "digest": {"title": "今日速览", "items": []},
