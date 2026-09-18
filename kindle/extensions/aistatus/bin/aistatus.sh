@@ -51,6 +51,7 @@ consecutive_failures=0
 clock_warned=0          # 精灵图缺失只报一次，不然日志会被刷爆
 sync_disabled=0         # 校时失败一次就别再试，免得反复折腾
 notice_shown=0          # 低电量提示占着整屏时不贴时钟
+woken_early=0           # 本轮是被人为唤醒的（不是闹钟），要重贴整图
 
 # ---------------------------------------------------------------------------
 log() {
@@ -370,7 +371,18 @@ secure_sleep() {
         # 如果 RTC 里还挂着旧闹钟就先清掉，否则唤醒时刻会不对
         [ "$(cat "$RTC" 2>/dev/null || echo 0)" -ne 0 ] && echo -n 0 >"$RTC" 2>/dev/null
         echo -n "$duration" >"$RTC" 2>/dev/null
+        t0=$(now_epoch)
         echo mem >/sys/power/state
+        slept=$(( $(now_epoch) - t0 ))
+        # 比预定时间早一大截就回来了 = 叫醒我们的不是闹钟，是有人碰屏幕或按了电源。
+        # 原生界面在恢复过程中会把我们画的整图擦掉，而循环每分钟只贴那一小块钟，
+        # 于是屏幕只剩一个时间、要等下一次拉图（四五小时后）才自愈 —— 必须当场重贴。
+        #
+        # slept 接近 0 表示压根没睡进去（设备忙），那不算人为唤醒：否则每次心跳都
+        # 重贴整图，屏幕会被刷坏。
+        if [ "$slept" -ge 5 ] && [ "$slept" -lt "$((duration - 10))" ]; then
+            woken_early=1
+        fi
     else
         # 退化为普通 sleep：设备不会真正休眠，耗电大，但一定能醒
         elapsed=0
@@ -441,17 +453,32 @@ main_loop() {
             cleanup
         fi
 
+        redrew=0
         now=$(now_epoch)
         # 第一次进来（还没图）或者到点，就拉一张整图
         if [ ! -f "$IMG" ] || [ "$now" -ge "$next_image_at" ]; then
             if refresh; then
                 # 下次什么时候再来，问云端（它才知道时刻表），问不到才自己按间隔算
                 next_image_at=$(plan_next_image)
+                redrew=1
             else
                 # 失败别等一整个周期，10 分钟后再试一次
                 next_image_at=$(( $(now_epoch) + 600 ))
             fi
         fi
+
+        # 被人为唤醒过、这一轮又没有重新拉图 —— 屏幕很可能已经被原生界面在恢复
+        # 过程中擦成空白了，而循环每分钟只贴那一小块钟，于是整屏就只剩一个时间，
+        # 要等到下一次拉图（四五小时后）才恢复。必须当场重贴。
+        #
+        # 用不带 -f 的局部刷新：不闪屏。代价只是累积一点残影，而下一次整图是全刷
+        # （FULL_REFRESH_EVERY=1），会顺手把它清掉。
+        if [ "$woken_early" = "1" ] && [ "$redrew" = "0" ] && [ -f "$IMG" ] \
+           && [ "$notice_shown" != "1" ]; then
+            eips -g "$IMG" >/dev/null 2>&1
+            log "检测到被人为唤醒，已重贴整图"
+        fi
+        woken_early=0
 
         # 整图刚刷过、或者只是过了一分钟 —— 都要重新贴时钟：
         # 前者因为整图里那块是留白的，后者因为时间变了。
