@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import io
 import argparse
 import hashlib
 import os
@@ -210,12 +211,22 @@ def main() -> int:
     t0 = time.time()
     total_bytes = 0
     worst = (0, "")
+    changed = 0
     for hour in range(24):
         for minute in range(60):
             label = probe.clock_text(datetime(2026, 1, 1, hour, minute))
             sprite = probe.clock_sprite(label)
             path = out_dir / f"{hour:02d}{minute:02d}.png"
-            sprite.save(path, format="PNG", optimize=True)
+            buf = io.BytesIO()
+            sprite.save(buf, format="PNG", optimize=True)
+            blob = buf.getvalue()
+            # 精灵图是「白底 + 几个字」，和它在整张图里的位置无关。所以只挪坐标
+            # （换字号最常见的结果）时这 1440 张其实一个字节都没变 —— 这时候
+            # 要拷进 Kindle 的只有 clock.conf 那一个文件，不是 4MB 的整个目录。
+            # 尺寸变了才会真的重画，那种情况必须整目录重拷，少拷就贴偏。
+            if not path.is_file() or path.read_bytes() != blob:
+                path.write_bytes(blob)
+                changed += 1
             size = path.stat().st_size
             total_bytes += size
             if size > worst[0]:
@@ -223,6 +234,7 @@ def main() -> int:
     cost = time.time() - t0
     line("生成", OK, f"1440 张，{total_bytes/1024/1024:.1f} MB，"
                      f"最大 {worst[0]/1024:.1f} KB（{worst[1]}），{cost:.0f}s")
+    line("变化", OK, f"其中 {changed} 张的内容和上次不同")
 
     # --- 写坐标 ---
     # newline="\n" 不能省：这个文件会被 Kindle 上的 sh **source**，
@@ -254,9 +266,16 @@ def main() -> int:
         print("     " + row)
 
     print()
-    print("下一步：把整个 clock/ 目录拷进 Kindle 的 extensions/aistatus/clock/，")
-    print("       并在 Kindle 的 config.sh 里设 CLOCK_MODE=local。")
-    print("       拷贝之后先在 KUAL 里跑一次「时钟贴图自检」再长期开启。")
+    # 到底要拷一个文件还是整个目录，取决于精灵图内容变没变，不是取决于"我重跑了没有"。
+    # 说错了会让人白拷 4MB，或者更糟 —— 只拷了 conf、图却是旧的，真机上时钟贴偏。
+    print("下一步：Kindle 的 config.sh 里保持 CLOCK_MODE=local。")
+    if changed == 0:
+        print(f"       这次 1440 张精灵图一张都没变，只需把**一个文件**拷进")
+        print(f"       extensions/aistatus/clock/ ：  clock.conf（{pretty(conf_path)}）")
+    else:
+        print(f"       这次有 {changed} 张精灵图内容变了，必须把**整个 clock/ 目录**")
+        print(f"       拷进 Kindle 的 extensions/aistatus/clock/，少拷就贴偏。")
+    print("       拷完先点「时钟贴图自检」那个 scriptlet，确认时钟在右上角再长期开。")
     return 0
 
 

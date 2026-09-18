@@ -39,8 +39,8 @@ DEFAULTS: dict[str, Any] = {
     "style": {
         # 设计预设，见 render.py 的 STYLE_PRESETS：经典 / 大字 / 紧凑 / 中式。
         # 一组配平过的字号 + 边距，不是单个字号开关。
-        # 改它之后必须重跑 make_clock_assets.py 并重新拷 clock/ 目录 ——
-        # 日历条的字一变，时钟留白区的左边界就跟着变。
+        # 改完必须重跑 make_clock_assets.py —— 日历条的字一变，时钟留白区就跟着动；
+        # 要拷哪个文件由那个脚本最后告诉你就行（只挪坐标时 clock.conf 一个文件）。
         "preset": "经典",
     },
     "location": {

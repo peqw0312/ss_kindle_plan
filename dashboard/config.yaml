@@ -35,11 +35,13 @@ device:
 #    为什么不能一个个调字号：那二十几个值是互相制约的（日历条变高 → 天气区就得
 #    变矮 → 数据格字号跟着收），放开单个就能把版面配崩，而且崩了才知道。
 #
-#    ⚠️ 改这里必须连着做两件事，少一件时钟就会贴偏：
-#      1. python dashboard/tools/make_clock_assets.py --force   （重新生成 1440 张）
-#      2. 把整个 kindle/extensions/aistatus/clock/ 重新拷进 Kindle
-#    因为日历条的字一变，图里那块留白的左边界就跟着动。
-#    自检：python dashboard/tools/layout_check.py 会同时校验精灵图和几何是否同步。
+#    ⚠️ 改这里之后要连着做两件事，少一件时钟就会贴偏：
+#      1. python dashboard/tools/make_clock_assets.py --force
+#      2. 按它最后那行说的去拷 —— 它会算出这次到底有几张精灵图变了：
+#         只挪了坐标（最常见）→ 拷 clock.conf 一个文件就够
+#         留白区尺寸变了        → 整个 clock/ 目录都要重拷
+#      别凭感觉拷整个目录，也别只拷 conf 就完事，听工具的。
+#    自检：python dashboard/tools/layout_check.py 会校验精灵图和几何是否同步。
 # -----------------------------------------------------------------------------
 style:
   preset: 大字
