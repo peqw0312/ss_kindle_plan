@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import re
 from datetime import datetime
@@ -57,6 +58,47 @@ FS_QUOTE_NAME = 30
 FS_QUOTE_PRICE = 52
 FS_QUOTE_PCT = 34
 FS_FOOT = 18
+
+#: 上面这批 FS_* 就是「经典」版的基准值，同时充当预设里没写到的项的兜底 ——
+#: 所以新增一个字号常量时，不必在四个预设里各补一行。
+_BASE_SIZES: dict[str, int] = {
+    k: v for k, v in list(globals().items()) if k.startswith("FS_") and isinstance(v, int)
+}
+
+#: 设计预设。`config.yaml` 的 `style.preset` 选哪一个。
+#:
+#: 每一项只写**要改的**字号，没写的沿用「经典」。margin 会覆盖 device.margin ——
+#: 因为边距和字号是一起配平的，分开调会得到第三种没验证过的版面。
+#:
+#: 为什么是预设而不是把二十几个字号一个个摆进 config：那二十几个值是互相制约的
+#: （日历条变高 → 天气区就得变矮 → 数据格字号要跟着收），单独放开一个就能把版面
+#: 配崩，而且崩了才知道。预设是配平过、跑过 layout_check 的整组。
+STYLE_PRESETS: dict[str, dict] = {
+    "经典": {},
+    "大字": {
+        # 只放大「远看要认的那两个数」：日期和温度。
+        # 小字（标签 / 数据格 / 行情）一律不动 —— 实测吃掉高度的正是它们：
+        # 把 FS_VALUE、FS_QUOTE_PRICE 这些一起提级，日期只加 20 就把余量从
+        # 44px 直接干到负数。远看要的是数字大，不是所有字都大。
+        "device.margin": 44,
+        "FS_CAL_DAY": 194, "FS_TEMP": 136,
+    },
+    "紧凑": {
+        "device.margin": 56,
+        "FS_CAL_DAY": 150, "FS_LUNAR": 52, "FS_CAL_MONTH": 30, "FS_CAL_WEEK": 34,
+        "FS_TEMP": 104, "FS_DESC": 38,
+        "FS_LABEL": 26, "FS_VALUE": 38, "FS_QUOTE_NAME": 26,
+        "FS_QUOTE_PRICE": 44, "FS_QUOTE_PCT": 30,
+        "FS_SECTION": 30, "FS_YIJI": 28, "FS_YIJI_MARK": 28, "FS_FOOT": 17,
+    },
+    "中式": {
+        "FS_LUNAR": 92, "FS_CAL_DAY": 168, "FS_CAL_MONTH": 34, "FS_CAL_WEEK": 40,
+        "FS_YIJI": 40, "FS_YIJI_MARK": 40, "FS_BADGE": 44,
+        "FS_TEMP": 112, "FS_DESC": 44,
+        "FS_QUOTE_NAME": 26, "FS_QUOTE_PRICE": 42, "FS_QUOTE_PCT": 28,
+        "FS_SECTION": 34,
+    },
+}
 
 #: 左侧撕页方块的宽度。再宽就挤压右边的时钟与农历了
 CAL_BOX_W = 256
@@ -169,8 +211,29 @@ def wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int,
 
 class Renderer:
     def __init__(self, cfg, data: dict):
-        self.cfg = cfg
         self.data = data or {}
+        self._notes: list[str] = []
+
+        # 字号落成**实例属性**，不是临时改模块全局：app.py 是多线程的，
+        # 两个请求同时改全局会串版 —— 一台设备上出现两种字号，而且看概率。
+        self.preset = str(cfg.get("style.preset", "经典") or "经典")
+        if self.preset not in STYLE_PRESETS:
+            self._notes.append(f"style.preset「{self.preset}」不存在，已退回「经典」。"
+                               f"可选：{'、'.join(STYLE_PRESETS)}")
+            self.preset = "经典"
+        chosen = STYLE_PRESETS[self.preset]
+        for name, base in _BASE_SIZES.items():
+            setattr(self, name, chosen.get(name, base))
+
+        # 带点号的键是配置覆盖（device.margin、weather.days 这种）。
+        # cfg 在多个请求之间共用同一个对象，直接改会把这一版的设置漏给别的请求，
+        # 所以有覆盖就先深拷一份自己用。
+        overrides = {k: v for k, v in chosen.items() if "." in k}
+        if overrides:
+            cfg = copy.deepcopy(cfg)
+            for key, value in overrides.items():
+                cfg.set(key, value)
+        self.cfg = cfg
         self.w, self.h = cfg.size
         self.s = cfg.scale
         self.margin = int(round(int(cfg.get("device.margin", 48)) * self.s))
@@ -181,7 +244,6 @@ class Renderer:
         self.d = ImageDraw.Draw(self.img)
         self.avail_w = self.w - self.margin * 2
         self.generated_at: datetime = self.data.get("generated_at") or datetime.now()
-        self._notes: list[str] = []
         # 富余高度均摊出来的额外内边距，由 render() 在绘制前算好
         self._cal_extra = 0
         self._weather_extra = 0
@@ -260,11 +322,11 @@ class Renderer:
 
     def section_title(self, y: int, title: str, *, right_note: str = "") -> int:
         """报纸式区块标题：粗体字 + 下方通栏粗线。返回内容区起始 y。"""
-        font = self.f(FS_SECTION, bold=True)
+        font = self.f(self.FS_SECTION, bold=True)
         self.text((self.margin, y), title, font, INK, strong=True)
         if right_note:
             self.text((self.w - self.margin, y + self.px(10)), right_note,
-                      self.f(FS_LABEL), GRAY, anchor="rt")
+                      self.f(self.FS_LABEL), GRAY, anchor="rt")
         bottom = y + self.lh(font) + self.px(8)
         self.rule(bottom, thickness=self.px(3))
         return bottom + self.px(15)
@@ -346,7 +408,7 @@ class Renderer:
         ox/oy 是把同一段文字画到精灵图小画布上时的整体平移量 ——
         有了它，精灵图和主图是**同一行代码**画出来的，连描边宽度都一致。
         """
-        font = self.f(FS_CLOCK, bold=True)
+        font = self.f(self.FS_CLOCK, bold=True)
         self.text((self.w - self.margin - ox,
                    box_top + self.ascent(font) + self.px(4) - oy),
                   label, font, INK, anchor="rs", strong=True)
@@ -448,8 +510,8 @@ class Renderer:
         right_w = self.w - self.margin - right_x
 
         bar_h = self.px(58)
-        day_font = self.f(FS_CAL_DAY, bold=True)
-        week_font = self.f(FS_CAL_WEEK)
+        day_font = self.f(self.FS_CAL_DAY, bold=True)
+        week_font = self.f(self.FS_CAL_WEEK)
 
         extra_top = self._cal_extra // 2
         extra_bottom = self._cal_extra - extra_top
@@ -458,13 +520,13 @@ class Renderer:
         left_h = (bar_h + pad_top + self.lh(day_font) + self.px(CAL_WEEK_GAP)
                   + self.lh(week_font) + pad_bottom)
 
-        clock_font = self.f(FS_CLOCK, bold=True)
+        clock_font = self.f(self.FS_CLOCK, bold=True)
         clock_w = self.tw(self.clock_probe(), clock_font)
 
-        lunar_font = self.f(FS_LUNAR, bold=True)
+        lunar_font = self.f(self.FS_LUNAR, bold=True)
         r1 = max(self.lh(lunar_font), self.lh(clock_font))
-        r2 = self.lh(self.f(FS_CAL_LINE))
-        badge_h = max(self.px(56), self.lh(self.f(FS_BADGE, bold=True)) + self.px(20))
+        r2 = self.lh(self.f(self.FS_CAL_LINE))
+        badge_h = max(self.px(56), self.lh(self.f(self.FS_BADGE, bold=True)) + self.px(20))
         # 右列三行之间的间距。这三个数不只是"好看"——富余高度会优先吃掉它们，
         # 否则文字全挤在上半截、徽章孤零零贴在底部，中间空一大块。
         g1, g2, g3 = self.px(18), self.px(10), self.px(22)
@@ -484,7 +546,7 @@ class Renderer:
         # 第一行的横向预算：时钟靠右占多少，剩下的才归农历
         text_w = max(self.px(180), right_w - clock_w - self.px(28))
 
-        strip_h = self.px(3) + self.px(18) + self.lh(self.f(FS_YIJI)) + self.px(18)
+        strip_h = self.px(3) + self.px(18) + self.lh(self.f(self.FS_YIJI)) + self.px(18)
         # 日历纸和宜忌条之间的那道空隙也算进总高，否则 measure 和 draw 会差一截
         band_h = self.px(8) + box_h + self.px(20) + strip_h
         return {
@@ -521,7 +583,7 @@ class Renderer:
         self.d.rectangle([x0, box_top + g["bar_h"] - radius,
                           box_right, box_top + g["bar_h"]], fill=INK)
         self.text(((x0 + box_right) / 2, box_top + g["bar_h"] / 2),
-                  f"{cal.solar_year}年{cal.solar_month}月", self.f(FS_CAL_MONTH, bold=True),
+                  f"{cal.solar_year}年{cal.solar_month}月", self.f(self.FS_CAL_MONTH, bold=True),
                   255, anchor="mm", strong=True)
 
         # 大字日期：撕页日历的视觉主角。按墨迹居中，别按行盒——数字没有下伸部
@@ -538,8 +600,8 @@ class Renderer:
         # 农历文字宁可缩一号也不压到时钟上（赶上闰月会多出一个字）
         lunar_font = g["lunar_font"]
         if self.tw(cal.lunar_text, lunar_font) > g["text_w"]:
-            size = FS_LUNAR
-            while size > FS_LUNAR * 0.5 and self.tw(
+            size = self.FS_LUNAR
+            while size > self.FS_LUNAR * 0.5 and self.tw(
                     cal.lunar_text, self.f(size, bold=True)) > g["text_w"]:
                 size -= 2
             lunar_font = self.f(size, bold=True)
@@ -551,7 +613,7 @@ class Renderer:
         if self.clock_in_image():
             self._draw_clock(self.clock_text(), box_top)
 
-        line_font = self.f(FS_CAL_LINE)
+        line_font = self.f(self.FS_CAL_LINE)
         y += g["r1"] + g["g1"]
         if self.cfg.get("calendar.show_ganzhi", True):
             gan_line = (f"{cal.ganzhi_year}年 属{cal.shengxiao} · "
@@ -573,7 +635,7 @@ class Renderer:
         # 贴日历纸底边对齐，两列的底缘才是齐的
         badge_top = box_bottom - g["badge_h"]
         badge_h = g["badge_h"]
-        badge_font = self.f(FS_BADGE, bold=True)
+        badge_font = self.f(self.FS_BADGE, bold=True)
         term_font = line_font
         if cal.badge:
             filled = cal.badge_kind == "festival"
@@ -608,8 +670,8 @@ class Renderer:
         strip_top = box_bottom + self.px(20)
         self.rule(strip_top, thickness=self.px(3))
         y = strip_top + self.px(18)
-        mark_font = self.f(FS_YIJI_MARK, bold=True)
-        body_font = self.f(FS_YIJI)
+        mark_font = self.f(self.FS_YIJI_MARK, bold=True)
+        body_font = self.f(self.FS_YIJI)
         box = self.px(46)
         baseline = y + self.ascent(body_font)
         right_text = f"{cal.chong} {cal.sha} · {cal.zhiri}日"
@@ -684,10 +746,10 @@ class Renderer:
           改成上下两行后，横向只受"较宽的那个"约束，怎么都不会越界。
         """
         pad = self.px(24) + self._weather_extra // 2
-        temp_font = self.f(FS_TEMP, bold=True)
-        desc_font = self.f(FS_DESC)
-        label_font = self.f(FS_LABEL)
-        value_font = self.f(FS_VALUE)
+        temp_font = self.f(self.FS_TEMP, bold=True)
+        desc_font = self.f(self.FS_DESC)
+        label_font = self.f(self.FS_LABEL)
+        value_font = self.f(self.FS_VALUE)
         icon_size = self.px(124)
         cols, rows = 2, 3
 
@@ -782,15 +844,19 @@ class Renderer:
             # 兜底：万一来了超长的数值（比如四位数的 AQI），宁可缩一号也不许越界。
             # 给后面的小字补充先留出位置，否则数值刚好占满时它会被顶出格子。
             tail = (self.px(8) + self.tw(sub, label_font)) if sub else 0
-            vfont = self._fit_font(value, FS_VALUE, gx + cell_w - vx - tail)
+            vfont = self._fit_font(value, self.FS_VALUE, gx + cell_w - vx - tail)
             self.text((vx, base), value, vfont, INK, anchor="ls", strong=True)
             if sub:
                 self.text((vx + self.tw(value, vfont) + self.px(8), base), sub,
                           label_font, GRAY, anchor="ls")
 
-        # --- 底部：未来三天，每天「日期 → 大图标 + 天气文字 → 最高最低」---
+        # --- 底部：未来几天，每天「日期 → 大图标 + 天气文字 → 最高最低」---
+        # 天数看 weather.days（含今天在内），不是写死三天。这里以前是 forecast[1:4]，
+        # 于是 config.yaml 里那个「含今天在内展示几天」从来没生效过 —— 改了没反应，
+        # 也不会报错，属于最容易被当成"配置没写对"的那类静默失效。
         forecast = weather.get("forecast") or []
-        show = forecast[1:4] if len(forecast) > 1 else forecast
+        future = max(0, int(self.cfg.get("weather.days", 4)) - 1)
+        show = forecast[1:1 + future] if len(forecast) > 1 else forecast
         if show:
             strip_y = top + g["strip_top"]
             self.rule(strip_y - self.px(12), thickness=max(1, self.px(2)), color=GRAY_LIGHT,
@@ -914,8 +980,8 @@ class Renderer:
     def digest_height(self, items: list, extra_gap: int = 0) -> int:
         if not items:
             return 0
-        title_font = self.f(FS_ITEM_TITLE, bold=True)
-        sum_font = self.f(FS_ITEM_SUM)
+        title_font = self.f(self.FS_ITEM_TITLE, bold=True)
+        sum_font = self.f(self.FS_ITEM_SUM)
         max_title_lines = int(self.cfg.get("digest.max_title_lines", 1))
         max_sum_lines = int(self.cfg.get("digest.max_summary_lines", 2))
         per_item = (max_title_lines * (self.lh(title_font) + self.px(self._TITLE_LINE_LEAD))
@@ -926,7 +992,7 @@ class Renderer:
 
     def _section_height(self) -> int:
         """区块标题 + 通栏线的固定高度。"""
-        return (self.lh(self.f(FS_SECTION, bold=True)) + self.px(8)
+        return (self.lh(self.f(self.FS_SECTION, bold=True)) + self.px(8)
                 + self.px(3) + self.px(15))
 
     def draw_digest(self, top: int, digest: dict, extra_gap: int = 0) -> int:
@@ -940,9 +1006,9 @@ class Renderer:
             note += f" · {model.split('/')[-1]}"
         y = self.section_title(top, digest.get("title", "AI · 早报"), right_note=note)
 
-        title_font = self.f(FS_ITEM_TITLE, bold=True)
-        sum_font = self.f(FS_ITEM_SUM)
-        chip_font = self.f(FS_ITEM_CHIP, bold=True)
+        title_font = self.f(self.FS_ITEM_TITLE, bold=True)
+        sum_font = self.f(self.FS_ITEM_SUM)
+        chip_font = self.f(self.FS_ITEM_CHIP, bold=True)
         max_title_lines = int(self.cfg.get("digest.max_title_lines", 1))
         max_sum_lines = int(self.cfg.get("digest.max_summary_lines", 2))
 
@@ -985,9 +1051,9 @@ class Renderer:
     # =====================================================================
 
     def quote_cell_h(self) -> int:
-        name_f = self.f(FS_QUOTE_NAME)
-        price_f = self.f(FS_QUOTE_PRICE, bold=True)
-        pct_f = self.f(FS_QUOTE_PCT, bold=True)
+        name_f = self.f(self.FS_QUOTE_NAME)
+        price_f = self.f(self.FS_QUOTE_PRICE, bold=True)
+        pct_f = self.f(self.FS_QUOTE_PCT, bold=True)
         return (self.lh(name_f) + self.px(QUOTE_GAP_NAME_PRICE)
                 + self.lh(price_f) + self.px(QUOTE_GAP_PRICE_PCT)
                 + self.lh(pct_f) + self._quotes_extra)
@@ -1014,9 +1080,9 @@ class Renderer:
         gap = self.px(28)
         cell_w = (self.avail_w - gap * (cols - 1)) / cols
         cell_h = self.quote_cell_h()
-        name_font = self.f(FS_QUOTE_NAME)
-        price_font = self.f(FS_QUOTE_PRICE, bold=True)
-        pct_font = self.f(FS_QUOTE_PCT, bold=True)
+        name_font = self.f(self.FS_QUOTE_NAME)
+        price_font = self.f(self.FS_QUOTE_PRICE, bold=True)
+        pct_font = self.f(self.FS_QUOTE_PCT, bold=True)
         marker = self.px(18)
 
         for i, entry in enumerate(entries):
@@ -1085,7 +1151,7 @@ class Renderer:
             bits.append("行情 腾讯")
         # 涨跌图例从行情标题挪到页脚，信息不丢，行情那块省下一整行
         bits.append("实心=涨 空心=跌")
-        font = self.f(FS_FOOT)
+        font = self.f(self.FS_FOOT)
         line = self.clip_text(" · ".join(bits), font, self.avail_w)
         self.text((self.margin, y + self.px(14)), line, font, GRAY)
 
@@ -1097,8 +1163,8 @@ class Renderer:
         """所有区块都没数据时的一屏提示。"""
         cy = y + self.px(180)
         self.icon(self.w / 2, cy, self.px(96), "fog", fill=GRAY_LIGHT)
-        title_font = self.f(FS_SECTION, bold=True)
-        body_font = self.f(FS_ITEM_SUM)
+        title_font = self.f(self.FS_SECTION, bold=True)
+        body_font = self.f(self.FS_ITEM_SUM)
         self.text((self.w / 2, cy + self.px(90)), "暂时没抓到数据", title_font, INK,
                   anchor="mt", strong=True)
         for i, line in enumerate((

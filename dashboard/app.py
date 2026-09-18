@@ -286,6 +286,9 @@ class Board:
             "generated_at": data["generated_at"].isoformat(timespec="seconds"),
             "version": __version__,
             "device": self.cfg.get("device.model"),
+            # 版面预设也报出来：它是 config 里能改的一项，线上跑的是哪个
+            # 只能靠这个字段确认，不然"我改了 preset 生效没有"没法查。
+            "style_preset": getattr(renderer, "preset", None),
             "size": list(self.cfg.size),
             "fonts": renderer.fonts.describe(),
             "notes": list(renderer.notes),
