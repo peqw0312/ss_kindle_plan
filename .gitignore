@@ -20,3 +20,7 @@ dashboard/config.local.yaml
 
 # 里面是和 .wbapp_*.genie 同一个内部 id，按上面那条同样的理由不提交
 .workbuddy/applications.yaml
+
+# 项目自己的 Python 环境（几百万个文件，绝不能进仓库）
+.venv/
+venv/

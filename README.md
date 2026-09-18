@@ -90,16 +90,36 @@ Kindle 端 `config.sh` 里有**主地址 + 备用地址**，按顺序试，主�
 
 ### 第 1 步 · 在电脑上把它跑起来
 
-```bash
-cd "Kindle Plan"
-python -m venv .venv
-.venv\Scripts\pip install -r dashboard/requirements.txt   # Windows
-.venv/bin/pip install -r dashboard/requirements.txt       # macOS / Linux
+**先确认你有一个能用的 Python。** Windows 上 `python` 常常是微软商店的占位壳子 ——
+敲了没反应、也不报错，看着像项目坏了其实没装 Python。用 `uv` 最省事（它自带一个
+独立的 Python，不跟任何编辑器/IDE 绑在一起）：
 
-python dashboard/generate.py -c dashboard/config.yaml
+```powershell
+cd "Kindle Plan"
+winget install astral-sh.uv          # 装过一次就不用再装
+uv venv .venv --python 3.13
+uv pip install --python .venv/Scripts/python.exe -r dashboard/requirements.txt
+
+.venv\Scripts\python.exe dashboard\generate.py -c dashboard\config.yaml
 ```
 
+macOS / Linux：
+
+```bash
+cd "Kindle Plan"
+uv venv .venv --python 3.13
+uv pip install --python .venv/bin/python -r dashboard/requirements.txt
+.venv/bin/python dashboard/generate.py -c dashboard/config.yaml
+```
+
+> 已经有可用的 Python 3.10+ 的话，传统写法也一样能用：
+> `python -m venv .venv` 然后 `.venv\Scripts\pip install -r dashboard/requirements.txt`。
+> 注意 `uv venv` 建出来的环境里**没有 pip**，要用上面 `uv pip --python` 那种写法。
+
 跑完打开 `docs/dashboard.png` 看看效果。**先调到满意再往下走**，改这个只要几秒。
+
+> 自检工具里 `verify_lunar.py`（农历对拍）要多装一个 `lunar_python`。
+> 它只是验证用的，运行时不依赖，所以没写进 requirements.txt —— 但改过农历代码就必须装它跑一遍。
 
 ### 第 2 步 · 配天气源（可选，但推荐）
 
