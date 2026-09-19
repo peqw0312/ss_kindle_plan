@@ -368,6 +368,11 @@ sleep_to_next_tick() {
         # 下限 60 秒：next_image_at 还没算出来（首轮）或已经过期时，
         # 别退化成不停空转；上限交给 plan_next_image 那边管。
         [ "$left" -lt 60 ] && left=60
+        # 上限 STOP_CHECK_MAX_SLEEP：循环只在醒来时才检查 .stop 文件，
+        # 不封顶的话关掉时钟之后心跳是"几小时一次"，用户建完 .stop 要好几个
+        # 小时才生效 —— 那等于把唯一的优雅出口废掉了。
+        # 10 分钟是个折中：一天醒 144 次，仍比贴钟时的 1440 次少一个数量级。
+        [ "$left" -gt "${STOP_CHECK_MAX_SLEEP:-600}" ] && left="${STOP_CHECK_MAX_SLEEP:-600}"
         secure_sleep "$left"
         return 0
     fi

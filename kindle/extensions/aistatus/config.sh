@@ -72,9 +72,16 @@ FULL_REFRESH_EVERY=1
 #      ⚠️ 但 STOP_FRAMEWORK=1 时书库是关着的，点不到它。想让这个出口随手可用，
 #         就得把 STOP_FRAMEWORK 改成 0。两者不能同时要。
 #   2. USB 连电脑，在 extensions/aistatus/ 里新建一个空文件名叫 .stop
-#      （最多一分钟后它自己退出并恢复书架界面）
+#      循环只在醒来时才检查这个文件，所以下面 STOP_CHECK_MAX_SLEEP 决定它最慢
+#      多久生效。默认 600 = 最多 10 分钟。
 #   3. 万能保底：长按电源键 40 秒强制重启，系统完全恢复原样
 STOP_FRAMEWORK=1
+
+#    .stop 最慢多久被发现（秒）。关掉时钟之后心跳本来会拉长到几小时一次，
+#    那 .stop 就等于没用了，所以这里封一个上限。
+#    调小 → 退出更跟手，但醒得更勤；调大 → 更省电，但 .stop 生效慢。
+#    600（10 分钟）= 一天醒 144 次，仍比贴钟时的 1440 次少一个数量级。
+STOP_CHECK_MAX_SLEEP=600
 
 # 1 = 刷完图让设备进入 suspend，靠 RTC 闹钟唤醒（配合 STOP_FRAMEWORK=1 使用）
 USE_RTC_SLEEP=1
