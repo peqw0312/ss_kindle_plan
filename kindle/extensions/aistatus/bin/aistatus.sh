@@ -52,7 +52,6 @@ clock_warned=0          # 精灵图缺失只报一次，不然日志会被刷爆
 sync_disabled=0         # 校时失败一次就别再试，免得反复折腾
 notice_shown=0          # 低电量提示占着整屏时不贴时钟
 woken_early=0           # 本轮是被人为唤醒的（不是闹钟），要重贴整图
-last_tap_at=0           # 上一次人为唤醒的时刻，用来判"双击退出"
 
 # ---------------------------------------------------------------------------
 log() {
@@ -501,21 +500,14 @@ main_loop() {
         #
         # 用不带 -f 的局部刷新：不闪屏。代价只是累积一点残影，而下一次整图是全刷
         # （FULL_REFRESH_EVERY=1），会顺手把它清掉。
-        if [ "$woken_early" = "1" ]; then
-            tap_at=$(now_epoch)
-            # 双击退出：原生界面会盖住我们的画面，而 STOP_FRAMEWORK=1 又让书架界面
-            # 打不开 —— 设备等于没有出口。这里把"两次人为唤醒挨得足够近"当作双击，
-            # 直接 cleanup() 回到桌面。不用去读触摸屏设备，纯靠时间差就够判。
-            if [ "${EXIT_TAP_GAP:-0}" -gt 0 ] && [ "$last_tap_at" -gt 0 ] \
-               && [ $((tap_at - last_tap_at)) -le "$EXIT_TAP_GAP" ]; then
-                log "连续两次触摸（间隔 $((tap_at - last_tap_at))s），退出并回到桌面"
-                cleanup
-            fi
-            last_tap_at=$tap_at
-            if [ "$redrew" = "0" ] && [ -f "$IMG" ] && [ "$notice_shown" != "1" ]; then
-                eips -g "$IMG" >/dev/null 2>&1
-                log "检测到被人为唤醒，已重贴整图"
-            fi
+        #
+        # 这里原来还挂着"双击屏幕退出"，已撤掉。碰屏幕是使用这块屏时最常见的动作，
+        # 拿它当退出键等于随机退出 —— 用户反馈的"只有重启后第一次能正常打开"
+        # 就是这么来的。退出只走「停止信息屏」、.stop 文件、长按电源三条路。
+        if [ "$woken_early" = "1" ] && [ "$redrew" = "0" ] && [ -f "$IMG" ] \
+           && [ "$notice_shown" != "1" ]; then
+            eips -g "$IMG" >/dev/null 2>&1
+            log "检测到被人为唤醒，已重贴整图"
         fi
         woken_early=0
 
