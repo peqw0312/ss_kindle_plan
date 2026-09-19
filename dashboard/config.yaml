@@ -97,7 +97,16 @@ calendar:
 # -----------------------------------------------------------------------------
 clock:
   style: cn12
-  mode: local
+  # mode 三选一，**必须和 Kindle 上 config.sh 的 CLOCK_MODE 配对**：
+  #   local  图里留白，Kindle 每分钟贴一张精灵图。时间永远准，但设备一天醒 1440 次
+  #   image  时间画进图里。图一天只重算四次，所以屏幕上是个最多六小时前的假时间
+  #   off    彻底不要时间。最省电（Kindle 一天醒 4~5 次），clock/ 那 1440 张也用不上
+  # 错配的两种后果：off + Kindle local = 右上角永远空白；local + Kindle off = 同上。
+  #
+  # ⚠️ 这个值**必须带引号**。YAML 1.1 把 off / on / yes / no 当成布尔值，
+  #    写裸的 `mode: off` 会被解析成 Python 的 False，然后一路被当成"不是 local"
+  #    处理成 image 模式 —— 屏幕上就会画一个几小时前的假时间，而且不报错。
+  mode: "off"
   font: 'C:\Windows\Fonts\Noto Sans SC (TrueType).otf'
   font_bold: 'C:\Windows\Fonts\Noto Sans SC Bold (TrueType).otf'
 

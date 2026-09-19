@@ -251,6 +251,18 @@ def check_clock_assets(cfg: Config, when: datetime) -> tuple[list[str], bool]:
 
     mode = cfg.get("clock.mode", "image")
     out: list[str] = []
+    # YAML 1.1 把 off/on/yes/no 解析成布尔值，裸写 `mode: off` 到这里会变成 False，
+    # 于是下面按"不是 local"处理成 image 模式 —— 屏幕上画个几小时前的假时间且不报错。
+    # 所以非字符串一律当场点名，别放过去。
+    if not isinstance(mode, str):
+        out.append(f"!! clock.mode 读出来是 {mode!r}（{type(mode).__name__}），不是字符串 —— "
+                   f"YAML 把 off/on/yes/no 当布尔值了，配置里要写成带引号的 \"off\"")
+        return out, False
+    mode = mode.lower()
+    if mode == "off":
+        out.append("clock.mode=off：屏幕上不要时间，图里不画、也不用精灵图 "
+                   "（Kindle 端 CLOCK_MODE 必须同为 off，否则右上角永远空白）")
+        return out, True
     if mode != "local":
         out.append(f"clock.mode={mode}：时钟画进图里，不用精灵图 "
                    f"（代价是图得按点重算才准）")

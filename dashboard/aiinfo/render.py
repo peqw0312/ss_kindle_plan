@@ -380,9 +380,13 @@ class Renderer:
         `clock.mode: local` 时把这块留白，由 Kindle 用系统时间贴精灵图。
         好处是**图不必为了"时间准"而反复重算**：数据一天只更新几次，
         但屏幕上的时间照样每分钟都是对的。
+
+        `clock.mode: off` 是彻底不要时间（为了省电，Kindle 端 CLOCK_MODE=off）。
+        这时**绝对不能画进图里** —— 图一天只重算四次，画进去的就是一个最多
+        六小时前的假时间，比没有更糟。这里以前写的是 `mode != "local"`，
+        任何别的值都会画进图里，加 off 这个选项时必须一起改，不然就是个错值。
         """
-        mode = str(self.cfg.get("clock.mode", "image") or "image").lower()
-        return mode != "local"
+        return str(self.cfg.get("clock.mode", "image") or "image").lower() == "image"
 
     def clock_region(self, cal=None) -> tuple[int, int, int, int]:
         """时钟在成品图里的绝对像素矩形 (左, 上, 右, 下)。

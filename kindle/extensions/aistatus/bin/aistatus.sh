@@ -355,9 +355,23 @@ refresh() {
 }
 
 # ---------------------------------------------------------------------------
-# 睡到下一个心跳点。按 epoch 取模对齐，所以时间不会逐次漂移累积 ——
-# 每次醒来贴的都是"整分钟"那一张，屏幕上的分钟数不会越走越偏。
+# 睡到下一个心跳点。
+#
+# CLOCK_MODE=local 时按 CLOCK_INTERVAL 对齐到整分钟 —— 贴钟必须踩着分钟边界，
+# 否则分钟数会越走越偏。
+#
+# 不贴钟的时候（CLOCK_MODE=off）**心跳必须改成跟着整图的节奏走**。
+# 以前这里无条件读 CLOCK_INTERVAL，于是"关掉时钟"只是不贴钟、设备照样每 60 秒
+# 醒一次，一度电都省不下来 —— 而省电恰恰是关掉时钟唯一的理由。
 sleep_to_next_tick() {
+    if [ "$CLOCK_MODE" != "local" ]; then
+        left=$(( next_image_at - $(now_epoch) ))
+        # 下限 60 秒：next_image_at 还没算出来（首轮）或已经过期时，
+        # 别退化成不停空转；上限交给 plan_next_image 那边管。
+        [ "$left" -lt 60 ] && left=60
+        secure_sleep "$left"
+        return 0
+    fi
     tick=$(int_of "$CLOCK_INTERVAL")
     [ "$tick" -ge 10 ] || tick=60
     left=$((tick - $(now_epoch) % tick))
