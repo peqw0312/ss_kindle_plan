@@ -418,6 +418,19 @@ init() {
     # 这一行是拿来当场核表的：屏幕上的时间就是这个 date 的输出，
     # 和你对着手表看到的时刻不一样 → 就是 config.sh 的 TIMEZONE 错了，别改别的。
     log "设备时间 $(date '+%Y-%m-%d %H:%M:%S')（TZ=${TZ:-未设置}，epoch $(date +%s)）"
+    # 这一行是掉电排查的第一现场。secure_sleep() 在 RTC 节点找不到/不可写时会
+    # 悄悄退化成普通 sleep 循环 —— 设备全程醒着，掉电极快，而日志上完全看不出来。
+    # 以前就是这样：一晚掉 60%，分不清是"醒得太勤"还是"根本没睡"。
+    if [ "$USE_RTC_SLEEP" != "1" ]; then
+        log "休眠：USE_RTC_SLEEP=0，设备不会真睡（很费电）"
+    elif [ -z "$RTC" ]; then
+        log "休眠：!! 找不到 RTC 唤醒节点（/sys/devices/platform/*rtc*/wakeup_enable）"
+        log "      → 会退化成普通 sleep，设备全程醒着。这就是掉电元凶，不是时钟"
+    elif [ ! -w "$RTC" ]; then
+        log "休眠：!! RTC 节点存在但不可写（$RTC）→ 同上，实际不会真睡"
+    else
+        log "休眠：RTC 可用（$RTC），echo mem 真休眠"
+    fi
     if [ "$CLOCK_MODE" = "local" ]; then
         if [ -f "$CLOCK_CONF" ]; then
             log "时钟：本机贴图，每 ${CLOCK_INTERVAL}s 一次，坐标 ($CLOCK_X,$CLOCK_Y)"
