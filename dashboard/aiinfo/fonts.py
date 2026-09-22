@@ -70,6 +70,19 @@ _FONT_DIRS = [
 
 _SCAN_PATTERNS = ["*CJK*", "*NotoSansSC*", "*wqy*", "*YaHei*", "*PingFang*", "*SourceHanSans*"]
 
+#: 显示字（只给日期/温度这类超大数字用）的候选。思源宋体 = Noto Serif CJK 同一套字形：
+#: 本机装的是 Source Han Serif SC Heavy，Debian/Ubuntu 的 fonts-noto-cjk 自带
+#: NotoSerifCJK 的 Regular/Bold。.ttc 里逐 index 挑 face 的逻辑复用 _resolve()。
+_DISPLAY_CANDIDATES = [
+    r"C:\Windows\Fonts\Source Han Serif SC Heavy (TrueType).ttf",
+    r"C:\Windows\Fonts\Source Han Serif SC Bold (TrueType).ttf",
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSerifCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSerifCJK-Regular.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+]
+
 
 @dataclass(frozen=True)
 class FontSpec:
@@ -185,15 +198,30 @@ def resolve(want_bold: bool = False) -> FontSpec:
     return FontSpec("", 0, "PIL-default")
 
 
+def resolve_display() -> FontSpec | None:
+    """找显示字（宋体）。找不到返回 None，由 FontBook 退回粗体黑——
+    版面几何不依赖它存在，只是书卷气差一点。"""
+    env_path = os.environ.get("AIINFO_FONT_DISPLAY")
+    if env_path and os.path.exists(env_path):
+        return _resolve(env_path, True)
+    for path in _DISPLAY_CANDIDATES:
+        if os.path.exists(path):
+            return _resolve(path, True)
+    return None
+
+
 class FontBook:
     """带缓存的字体加载器。同一尺寸只加载一次，避免渲染时反复 IO。"""
 
-    def __init__(self, regular: FontSpec | None = None, bold: FontSpec | None = None):
+    def __init__(self, regular: FontSpec | None = None, bold: FontSpec | None = None,
+                 display: FontSpec | None = None):
         self.regular = regular or resolve(False)
         self.bold = bold or resolve(True)
         # 有些环境（比如只装了微软雅黑一种）没有独立粗体，只能靠描边模拟
         self.bold_is_real = os.path.normcase(self.bold.path) != os.path.normcase(self.regular.path)
-        self._cache: dict[tuple[int, bool], ImageFont.FreeTypeFont] = {}
+        self.display = display or resolve_display() or self.bold
+        self.display_is_real = os.path.normcase(self.display.path) != os.path.normcase(self.bold.path)
+        self._cache: dict[tuple[int, str], ImageFont.FreeTypeFont] = {}
         self._warn_if_no_cjk()
 
     def _warn_if_no_cjk(self) -> None:
@@ -205,11 +233,17 @@ class FontBook:
             )
 
     def get(self, size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+        return self._get(size, "b" if bold else "r")
+
+    def get_display(self, size: int) -> ImageFont.FreeTypeFont:
+        return self._get(size, "d")
+
+    def _get(self, size: int, weight: str) -> ImageFont.FreeTypeFont:
         size = max(6, int(round(size)))
-        key = (size, bold)
+        key = (size, weight)
         if key in self._cache:
             return self._cache[key]
-        spec = self.bold if bold else self.regular
+        spec = {"b": self.bold, "d": self.display}.get(weight, self.regular)
         if not spec.path:
             font = ImageFont.load_default()
         else:
@@ -223,8 +257,11 @@ class FontBook:
     def describe(self) -> str:
         reg = self.regular.name or os.path.basename(self.regular.path) or "PIL-default"
         bold = self.bold.name or os.path.basename(self.bold.path) or "PIL-default"
+        disp = self.display.name or os.path.basename(self.display.path) or "PIL-default"
         suffix = "" if self.bold_is_real else "（无独立粗体，用描边模拟）"
-        return f"常规={reg} / 粗体={bold}{suffix}"
+        if not self.display_is_real:
+            suffix += "（无宋体，显示字退回粗体黑）"
+        return f"常规={reg} / 粗体={bold} / 显示={disp}{suffix}"
 
 
 # 认这两组键，前一组优先（`font.*` 是通用写法，`clock.*` 是历史字段名）
@@ -253,6 +290,7 @@ def book_for(cfg) -> FontBook:
     """
     regular = resolve(False)
     bold = resolve(True)
+    display = None
     if cfg is None:
         return FontBook(regular=regular, bold=bold)
     for key, fallback_key, want_bold in _FONT_KEYS:
@@ -264,4 +302,7 @@ def book_for(cfg) -> FontBook:
             bold = spec
         else:
             regular = spec
-    return FontBook(regular=regular, bold=bold)
+    disp_path = cfg.get("font.display")
+    if disp_path and os.path.exists(str(disp_path)):
+        display = _resolve(str(disp_path), True)
+    return FontBook(regular=regular, bold=bold, display=display)

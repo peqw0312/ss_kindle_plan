@@ -215,18 +215,36 @@ def check_weather_grid(cfg: Config, when: datetime) -> list[str]:
                        + ("OK" if fits and not shrunk else
                           ("OK（降到 %dpx）" % vfont.size if fits else "溢出，会压到隔壁格")))
 
-    # 左半区：图标 + 温度（描述在温度下面另起一行，横向只和温度抢地方）
+    # 左半区两行：第一行「图标 + 温度」，第二行天气描述
     temp_font = renderer.f(R.FS_TEMP, True)
     desc_font = renderer.f(R.FS_DESC)
-    text_w = max(renderer.px(120), left_w - icon_size - renderer.px(34))
-    for temp, desc in (("29°", "多云转小雨"), ("-12°", "大雨转暴雪")):
-        tw_ = renderer.tw(temp, temp_font)
-        dw = renderer.clip_text(desc, desc_font, text_w)
-        need = icon_size + renderer.px(22) + max(tw_, renderer.tw(dw, desc_font))
-        fits = need <= left_w
+    desc_w = left_w - renderer.px(28)      # 再让出和数据格之间那道间隙
+    for temp, w in (("-12°", WEATHER), ("29°", dict(WEATHER, desc="阵雨转多云"))):
+        line = w["desc"]
+        row1 = icon_size + renderer.px(22) + renderer.tw(temp, temp_font)
+        row2 = renderer.tw(line, desc_font)
+        bad = bad or row1 > left_w or row2 > desc_w
+        out.append(f"     「{temp}」{row1:.0f}px ·「{line}」{row2:.0f}px "
+                   f"/ 上限 {desc_w:.0f}px "
+                   + ("OK" if row2 <= desc_w and row1 <= left_w else
+                      f"放不下，会被截成「{renderer.clip_text(line, desc_font, desc_w)}」"))
+
+    # 预报条：今天也算一格，所以格子数 = weather.days，格宽随天数变窄。
+    # 每天那一格要放「图标 + 天气文字」和「最高° 最低°」两行。
+    days = max(1, int(renderer.cfg.get("weather.days", 4)))
+    strip_w = (renderer.avail_w - pad * 2) / days
+    day_icon = g["day_icon"]
+    label_font = renderer.f(R.FS_LABEL)
+    value_font = renderer.f(R.FS_VALUE)
+    for desc, high, low in (("阵雨转多云", -12, -18), ("晴", 30, 23)):
+        row_a = day_icon + renderer.px(16) + renderer.tw(desc[:4], label_font)
+        h = f"{high}°"
+        row_b = renderer.tw(h, value_font) + renderer.px(10) + renderer.tw(f"{low}°", label_font)
+        fits = max(row_a, row_b) <= strip_w
         bad = bad or not fits
-        out.append(f"     温度 {temp!r} 描述 {dw!r} 需要 {need:.0f}px / {left_w:.0f}px "
-                   + ("OK" if fits else "越界"))
+        out.append(f"     预报 {days} 格：「{desc[:4]}」{row_a:.0f}px · "
+                   f"「{h} {low}°」{row_b:.0f}px / 每格 {strip_w:.0f}px "
+                   + ("OK" if fits else "挤了，减少 weather.days 或调小 FS_VALUE"))
     out.append("天气卡片横向预算正常" if not bad
                else "天气卡片有格子放不下，调小字号或把 WEATHER_SPLIT 往右挪")
     if shrunk_any:
@@ -379,11 +397,27 @@ def main() -> int:
     print("=" * 66)
 
     print("\n【纵向预算】")
+    poster = str(cfg.get("style.layout", "bands") or "bands").lower() == "poster"
     worst = 0
+    worst_slack = 10 ** 9
     for tag, when, weather in SCENARIOS:
         cal = calendar_info(when)
         data = build_data(cfg, when, weather)
         renderer = Renderer(cfg, data)
+        if poster:
+            # 帖版没有"条带基准高"这个概念：直接渲染，量每块实际占的矩形和底边余量
+            image = renderer.render()
+            image.save(out_dir / f"{tag}.png")
+            worst_slack = min(worst_slack, renderer.slack)
+            print(f"\n  -- {tag}：{cal.solar_text} {cal.lunar_text} "
+                  f"徽章={cal.badge or '无'} 值日={cal.zhiri}日 --")
+            for key, (_x0, y0, _x1, y1) in renderer.block_boxes.items():
+                print(f"     {renderer.BLOCK_LABELS.get(key, key):<6} "
+                      f"y {y0:>4}..{y1:>4}   高 {y1 - y0:>4}px")
+            print(f"     底边余量 {renderer.slack}px（帖版不摊富余，回收=底部留白）")
+            for note in renderer.notes:
+                print(f"     {WARN} {note}")
+            continue
         total, detail = measure(renderer, data, cfg)
         worst = max(worst, total)
         print(f"\n  -- {tag}：{cal.solar_text} {cal.lunar_text} "
@@ -395,13 +429,18 @@ def main() -> int:
         for note in renderer.notes:
             print(f"     {WARN} {note}")
 
-    print("\n【横向预算 · 日历条第一行】")
-    for row in check_width_budget(cfg, SCENARIOS[0][1]):
-        print(f"     {row}")
+    if poster:
+        print("\n【横向预算】")
+        print("     帖版所有长字符串都走 clip_text 兜底（干支节气行 / 预警 / 预报描述 /"
+              " 速览标题），跳过条带版的两栏横向检查。")
+    else:
+        print("\n【横向预算 · 日历条第一行】")
+        for row in check_width_budget(cfg, SCENARIOS[0][1]):
+            print(f"     {row}")
 
-    print("\n【横向预算 · 天气卡片】")
-    for row in check_weather_grid(cfg, SCENARIOS[0][1]):
-        print(f"     {row}")
+        print("\n【横向预算 · 天气卡片】")
+        for row in check_weather_grid(cfg, SCENARIOS[0][1]):
+            print(f"     {row}")
 
     print("\n【时钟精灵图 · 与版面几何同步】")
     try:
@@ -411,10 +450,38 @@ def main() -> int:
     for row in clock_rows:
         print(f"     {row}")
 
+    print("\n【电量精灵图 · 与版面几何同步】")
+    battery_ok = True
+    if not poster:
+        print("     非 poster 版式，右上角没有电量区，跳过")
+    else:
+        region = Renderer(cfg, build_data(cfg, SCENARIOS[0][1], WEATHER)).battery_region()
+        conf = ROOT / "kindle" / "extensions" / "aistatus" / "battery" / "battery.conf"
+        if not conf.is_file():
+            battery_ok = False
+            print("     !! 还没有 battery.conf —— 跑 dashboard/tools/make_battery_assets.py")
+        else:
+            got = {}
+            for line_ in conf.read_text(encoding="utf-8").splitlines():
+                if "=" in line_ and not line_.startswith("#"):
+                    k, v = line_.split("=", 1)
+                    got[k] = v.strip()
+            want = {"BATTERY_X": region[0], "BATTERY_Y": region[1],
+                    "BATTERY_W": region[2] - region[0],
+                    "BATTERY_H": region[3] - region[1]}
+            bad = [k for k, v in want.items() if str(v) != got.get(k, "")]
+            if bad:
+                battery_ok = False
+                print(f"     !! battery.conf 的 {bad} 和渲染器算出的 {region} 对不上 —— "
+                      f"重跑 make_battery_assets.py 并重拷 battery/")
+            else:
+                print(f"     精灵图坐标与 geometry 一致：{region}（指纹 {got.get('BATTERY_TAG')}）")
+
     print("\n【结论】")
-    slack = cfg.size[1] - worst
+    slack = worst_slack if poster else cfg.size[1] - worst
     if slack >= 40:
-        line("余量", OK, f"最紧的一屏还剩 {slack}px，均摊成内边距后版面很从容")
+        tail = ("回收的空间留在底部当留白" if poster else "均摊成内边距后版面很从容")
+        line("余量", OK, f"最紧的一屏还剩 {slack}px，{tail}")
     elif slack >= 0:
         line("余量", WARN, f"最紧的一屏只剩 {slack}px：不会越界，但换字体会很紧，"
                            "建议再压一点字号")
@@ -422,6 +489,10 @@ def main() -> int:
         line("余量", BAD, f"最紧的一屏已经超出 {-slack}px，必须减字号或关一个区块")
     line("时钟", OK if clock_ok else BAD,
          "精灵图与几何同一套" if clock_ok else "精灵图与几何对不上，真机上会贴偏")
+    if poster:
+        line("电量", OK if battery_ok else BAD,
+             "精灵图坐标与版面几何一致" if battery_ok
+             else "battery.conf 与版面几何对不上，真机上会贴偏")
     print("     安全线是 40px：图上的字统一由 fonts.book_for 解析（默认指到 Noto），")
     print("     所以本机预览和云端出图的行高一致，不会再出现本机雅黑 / 云端 Noto 那种差异。")
     print(f"     预览图：{out_dir}")

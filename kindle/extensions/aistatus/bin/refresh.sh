@@ -4,7 +4,7 @@
 #
 #  这是排障时最有用的一个脚本：它不依赖后台主循环，自己把整条链路走一遍，
 #  每一步都会打印结果。第一次配置时建议先单独跑这个，跑通了再启动主循环。
-#  在 KUAL 里点「测试下载并刷新」，或者 SSH 执行 sh bin/refresh.sh
+#  在书库里点「测试刷新一次」（它就是一个 scriptlet），或者 SSH 执行 sh bin/refresh.sh
 #
 #  最后一步会按当前配置**把时钟也贴上**，所以你看到的画面和常驻模式是一样的。
 # =============================================================================
@@ -175,8 +175,14 @@ printf "      屏幕    : "; eips -i 2>/dev/null | grep -E 'xres|yres|bits_per_p
 echo ""
 echo "      电量    : $(gasgauge-info -c 2>/dev/null)"
 echo "      分辨率  : 图片必须是上面 xres × yres 这个尺寸，否则显示会错位"
-echo "      RTC     : $(ls /sys/devices/platform/*rtc*/wakeup_enable 2>/dev/null || echo '未找到，将退化为普通 sleep')"
+# 唤醒节点：这台 PW3 上没有老内核的 wakeup_enable，只有 /sys/class/rtc/*/wakealarm。
+# 探测顺序必须和 aistatus.sh 里那段一致，否则这里报"未找到"、那边其实用得好好的，
+# 白白把人往错方向带一个来回。
+rtc=$(ls /sys/class/rtc/rtc0/wakealarm /sys/class/rtc/rtc1/wakealarm \
+         /sys/class/rtc/rtc2/wakealarm 2>/dev/null | head -n 1)
+[ -n "$rtc" ] || rtc=$(ls /sys/devices/platform/*rtc*/wakeup_enable 2>/dev/null | head -n 1)
+echo "      RTC     : ${rtc:-!! 两代唤醒节点都没有，会退化成普通 sleep（整夜醒着）}"
 
 rm -f "$TMP" "$HDR"
 echo ""
-echo "=== 完成。确认屏幕正常后，回 KUAL 点「启动信息屏」进入常驻模式 ==="
+echo "=== 完成。确认屏幕正常后，点「启动信息屏」进入常驻模式 ==="

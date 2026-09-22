@@ -43,8 +43,16 @@ DEFAULTS: dict[str, Any] = {
         # 要拷哪个文件由那个脚本最后告诉你就行（只挪坐标时 clock.conf 一个文件）。
         "preset": "经典",
     },
+    "layout": {
+        # 区块从上到下的顺序，四块：calendar 日历 / weather 天气 /
+        # digest 速览 / quotes 行情。写漏的补到末尾，写错名的丢掉，不会炸。
+        # 预设（style.preset）也可能带自己的顺序，那会盖掉这里 —— 见 render.py。
+        # 时钟住在日历条里，所以日历排到第几块，时钟留白区就跟着到第几块：
+        # 改过顺序要重跑 make_clock_assets.py。
+        "order": ["calendar", "weather", "digest", "quotes"],
+    },
     "location": {
-        "name": "杭州 · 临平山",
+        "name": "杭州 · 临平区",
         "latitude": 30.4159,
         "longitude": 120.2804,
         "timezone": "Asia/Shanghai",
@@ -57,8 +65,7 @@ DEFAULTS: dict[str, Any] = {
     "weather": {
         "enabled": True,
         "days": 4,          # 含今天在内展示几天
-        "show_air": True,
-        "show_sun": True,   # 显示日出日落
+        "show_air": True,   # 抓不抓空气质量，见 sources.py
     },
     "digest": {
         "enabled": True,

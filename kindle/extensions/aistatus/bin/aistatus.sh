@@ -29,7 +29,23 @@ LOG="$DIR/aistatus.log"
 RUN_FLAG="$DIR/.running"
 STOP_FLAG="$DIR/.stop"
 PID_FILE="$DIR/.pid"
-RTC=$(ls /sys/devices/platform/*rtc*/wakeup_enable 2>/dev/null | head -n 1)
+
+# 唤醒节点。两代内核写法不一样，用错一代 = 永远找不到 = 永远不真睡：
+#   K4 及更早：/sys/devices/platform/*rtc*/wakeup_enable，写进去的是"还差几秒"
+#   K5（PW3）：/sys/class/rtc/rtcN/wakealarm，写进去的是 "+几秒"，且要先写 0 清空
+# 实测这台 PW3 上**没有** wakeup_enable（见 system_probe.txt），只有三个可写的
+# wakealarm。以前只找老写法，所以每次都掉进"退化成普通 sleep"那条退路 ——
+# 设备整夜醒着，一晚掉 60% 电，而日志上完全看不出来。
+RTC=""
+RTC_KIND=""
+for r in /sys/class/rtc/rtc0/wakealarm /sys/class/rtc/rtc1/wakealarm \
+         /sys/class/rtc/rtc2/wakealarm; do
+    if [ -w "$r" ]; then RTC="$r"; RTC_KIND="wakealarm"; break; fi
+done
+if [ -z "$RTC" ]; then
+    r=$(ls /sys/devices/platform/*rtc*/wakeup_enable 2>/dev/null | head -n 1)
+    [ -n "$r" ] && [ -w "$r" ] && { RTC="$r"; RTC_KIND="wakeup_enable"; }
+fi
 
 # 时钟精灵图的坐标由 make_clock_assets.py 生成，跟出图共用同一份几何。
 # 坐标文件不在就是没生成过，stamp_clock 会点名报错而不是默默什么都不做。
@@ -46,9 +62,19 @@ CLOCK_Y=$(printf '%s' "$CLOCK_Y" | tr -d '\r')
 CLOCK_W=$(printf '%s' "$CLOCK_W" | tr -d '\r')
 CLOCK_H=$(printf '%s' "$CLOCK_H" | tr -d '\r')
 
+# 电量精灵图的坐标，同 clock.conf 的套路：source 进来 + 剥回车
+BATTERY_DIR="$DIR/battery"
+BATTERY_CONF="$BATTERY_DIR/battery.conf"
+BATTERY_X=""
+BATTERY_Y=""
+[ -f "$BATTERY_CONF" ] && . "$BATTERY_CONF"
+BATTERY_X=$(printf '%s' "$BATTERY_X" | tr -d '\r')
+BATTERY_Y=$(printf '%s' "$BATTERY_Y" | tr -d '\r')
+
 refresh_count=0
 consecutive_failures=0
 clock_warned=0          # 精灵图缺失只报一次，不然日志会被刷爆
+battery_warned=0        # 同上，电量精灵图缺失也只报一次
 sync_disabled=0         # 校时失败一次就别再试，免得反复折腾
 notice_shown=0          # 低电量提示占着整屏时不贴时钟
 woken_early=0           # 本轮是被人为唤醒的（不是闹钟），要重贴整图
@@ -221,6 +247,38 @@ stamp_clock() {
 }
 
 # ---------------------------------------------------------------------------
+# 贴电量。和贴时钟同一条路：整图右上角是留白的，刷完整图补这一小块。
+# 缺精灵图 / 读不到电量都只记一次日志然后跳过 —— 右上角留白是无害的，
+# 不能因为电量把整轮刷新搞失败。
+stamp_battery() {
+    [ "$BATTERY_MODE" = "local" ] || return 0
+
+    if [ ! -f "$BATTERY_CONF" ]; then
+        if [ "$battery_warned" = "0" ]; then
+            battery_warned=1
+            log "!! BATTERY_MODE=local 但找不到 $BATTERY_CONF"
+            log "   把 make_battery_assets.py 生成的 battery/ 整个目录拷进来即可。"
+        fi
+        return 1
+    fi
+
+    bat=$(battery_level)
+    [ -n "$bat" ] || return 1
+    lvl=$(( (bat + 5) / 10 * 10 ))
+    [ "$lvl" -gt 100 ] && lvl=100
+    sprite="$BATTERY_DIR/$(printf '%03d' "$lvl").png"
+    if [ ! -f "$sprite" ]; then
+        if [ "$battery_warned" = "0" ]; then
+            battery_warned=1
+            log "!! 电量精灵图缺文件：$sprite —— 大致是没拷全，重新整目录拷一次"
+        fi
+        return 1
+    fi
+
+    eips -g "$sprite" -w "$BATTERY_WAVE" -x "$BATTERY_X" -y "$BATTERY_Y" >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
 battery_level() {
     gasgauge-info -c 2>/dev/null | tr -cd '0-9'
 }
@@ -337,6 +395,7 @@ refresh() {
         else
             show_image
             show_status_line
+            stamp_battery
         fi
         [ "$WIFI_SLEEP" = "1" ] && wifi_off
         return 0
@@ -387,12 +446,25 @@ sleep_to_next_tick() {
 secure_sleep() {
     duration="$1"
     if [ "$USE_RTC_SLEEP" = "1" ] && [ -n "$RTC" ] && [ -w "$RTC" ]; then
-        # 如果 RTC 里还挂着旧闹钟就先清掉，否则唤醒时刻会不对
-        [ "$(cat "$RTC" 2>/dev/null || echo 0)" -ne 0 ] && echo -n 0 >"$RTC" 2>/dev/null
-        echo -n "$duration" >"$RTC" 2>/dev/null
+        # 先写 0 清掉旧闹钟，否则唤醒时刻会沿用上一次的值
+        echo 0 >"$RTC" 2>/dev/null
+        case "$RTC_KIND" in
+            wakealarm)     echo "+$duration" >"$RTC" 2>/dev/null ;;   # 新内核：相对秒数要带 +
+            wakeup_enable) echo "$duration"  >"$RTC" 2>/dev/null ;;   # 老内核：裸秒数
+        esac
         t0=$(now_epoch)
         echo mem >/sys/power/state
         slept=$(( $(now_epoch) - t0 ))
+        # 第一次必须留下证据：计划睡多久 vs 实际睡了多久。
+        # slept ≈ duration = 真睡进去了；slept ≈ 0 = `echo mem` 压根没生效
+        # （多半是 RTC 没被登记成唤醒源），那跟没改之前一样整夜醒着。
+        if [ -z "$first_sleep_logged" ]; then
+            first_sleep_logged=1
+            # 把 next_image_at 和睡前时刻一起打出来：实测出现过"计划 60s"，
+            # 而按配置应该封顶在 600s。光看 duration 分不清是算错了还是被上下限
+            # 夹的，这两个值一放进来就能立刻看出来是哪一头。
+            log "首次休眠实测：计划 ${duration}s，实际睡了 ${slept}s（$RTC_KIND @ $RTC）· 睡前 $t0 · 下次出图 $next_image_at"
+        fi
         # 比预定时间早一大截就回来了 = 叫醒我们的不是闹钟，是有人碰屏幕或按了电源。
         # 原生界面在恢复过程中会把我们画的整图擦掉，而循环每分钟只贴那一小块钟，
         # 于是屏幕只剩一个时间、要等下一次拉图（四五小时后）才自愈 —— 必须当场重贴。
@@ -414,14 +486,24 @@ secure_sleep() {
 }
 
 # ---------------------------------------------------------------------------
+# 退出原因必须写进日志。以前三条退出路径（有人放了 .stop / 运行标记没了 /
+# 被信号杀掉）打出来的是同一行「退出：恢复系统状态」，于是"程序为什么自己退了"
+# 永远查不出来 —— 用户看到的只是"过一会儿屏幕被主页面盖掉了"。
 cleanup() {
-    log "退出：恢复系统状态"
+    log "退出：恢复系统状态（原因：${1:-未记录}）"
     rm -f "$RUN_FLAG" "$PID_FILE" "$STOP_FLAG" "$TMP" "$HDR"
     eips -c >/dev/null 2>&1
     lipc-set-prop com.lab126.powerd preventScreenSaver 0 >/dev/null 2>&1
     if [ "$STOP_FRAMEWORK" = "1" ]; then
-        /etc/init.d/framework start >/dev/null 2>&1
-        initctl start webreader >/dev/null 2>&1
+        # 反过来还回去。framework 起来后一般会把 pillow / statusbar 自己带起来，
+        # 所以先只 start framework，等两秒，再补那些仍然没跑的任务 ——
+        # 免得对着一个已经 running 的任务重复 start，多一个说不清的变量。
+        initctl start framework >/dev/null 2>&1
+        sleep 2
+        for j in $UI_JOBS; do
+            initctl status "$j" 2>/dev/null | grep -q "start/running" \
+                || initctl start "$j" >/dev/null 2>&1
+        done
         echo ondemand >/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
         log "已重新启动原生界面"
     fi
@@ -442,13 +524,57 @@ init() {
     if [ "$USE_RTC_SLEEP" != "1" ]; then
         log "休眠：USE_RTC_SLEEP=0，设备不会真睡（很费电）"
     elif [ -z "$RTC" ]; then
-        log "休眠：!! 找不到 RTC 唤醒节点（/sys/devices/platform/*rtc*/wakeup_enable）"
+        log "休眠：!! 两代唤醒节点都没有（新 wakealarm / 老 wakeup_enable 都试过）"
         log "      → 会退化成普通 sleep，设备全程醒着。这就是掉电元凶，不是时钟"
     elif [ ! -w "$RTC" ]; then
-        log "休眠：!! RTC 节点存在但不可写（$RTC）→ 同上，实际不会真睡"
+        log "休眠：!! 唤醒节点存在但不可写（$RTC）→ 同上，实际不会真睡"
     else
-        log "休眠：RTC 可用（$RTC），echo mem 真休眠"
+        log "休眠：用 $RTC_KIND（$RTC），echo mem 真休眠"
     fi
+    # 系统探针，写进文件，插上 USB 就能在电脑上看。每次启动都重写（文件很小），
+    # 因为固件升级后答案可能变。
+    #
+    # 为什么要它：`/etc/init.d/framework stop` 在这台设备上返回 **127（命令不存在）**，
+    # 于是界面从来没被停过 —— "碰一下就回主界面""系统时钟盖上来"全是这个带来的，
+    # 而那行「framework 已停止」是无条件打印的，谁也没发现它在撒谎。
+    # "该用哪条命令停界面""该往哪个节点写闹钟"只有设备自己知道，
+    # 凭印象换个路径试，多半还是静默失败。所以先问，再改。
+    {
+        echo "== 生成于 $(date '+%Y-%m-%d %H:%M:%S') =="
+        echo "身份  = $(id)"
+        echo "固件  = $(cat /etc/version 2>/dev/null | tr '\n' ' ')"
+        echo "型号  = $(cat /proc/device-tree/model 2>/dev/null)"
+        echo "-- /etc/init.d 到底存不存在、里面有什么 --"
+        if [ -d /etc/init.d ]; then ls -l /etc/init.d/ 2>&1; else echo "（没有 /etc/init.d 这个目录）"; fi
+        echo "-- initctl 管着哪些任务（全量，别截断：要找的就是那个界面任务）--"
+        echo "initctl = $(command -v initctl || echo 不在 PATH)"
+        initctl list 2>&1
+        echo "-- 正在跑什么（全量 ps：界面进程叫什么还不知道，不能靠 grep 猜名字）--"
+        ps 2>&1
+        echo "-- 网络（要它的 IP：能 SSH 上去就不用再反复插拔线了）--"
+        echo "wlan0 IP   = $(ifconfig wlan0 2>/dev/null | grep -o 'inet addr:[0-9.]*' | cut -d: -f2)"
+        echo "WiFi 状态  = $(lipc-get-prop com.lab126.wifid cmState 2>/dev/null)"
+        echo "sshd 状态  = $(initctl status sshd 2>&1 | tr '\n' ' ')"
+        echo "-- RTC 与唤醒节点 --"
+        ls -d /sys/devices/platform/*rtc* 2>/dev/null || echo "（platform 下没有 rtc）"
+        ls /sys/class/rtc/ 2>/dev/null || echo "（没有 /sys/class/rtc）"
+        for r in /sys/class/rtc/*; do
+            [ -d "$r" ] || continue
+            wa=$([ -w "$r/wakealarm" ] && echo 可写 || echo 不可写)
+            echo "$r  name=$(cat "$r/name" 2>/dev/null)  time=$(cat "$r/time" 2>/dev/null)  wakealarm=$wa"
+        done
+        ls /sys/devices/platform/*/power/wakeup 2>/dev/null | head -n 20
+        ls /sys/devices/platform/*rtc*/wakeup_enable 2>/dev/null \
+            || echo "（没有 wakeup_enable —— 老内核那套写法在这台机器上不适用）"
+        echo "-- 休眠接口 --"
+        ls /sys/power 2>/dev/null
+        echo "state        = $(cat /sys/power/state 2>/dev/null)"
+        echo "wakeup_count = $(cat /sys/power/wakeup_count 2>/dev/null)"
+        echo "-- powerd 属性 --"
+        echo "sleepDuration      = $(lipc-get-prop com.lab126.powerd sleepDuration 2>/dev/null)"
+        echo "powerMgrState      = $(lipc-get-prop com.lab126.powerd powerMgrState 2>/dev/null)"
+        echo "preventScreenSaver = $(lipc-get-prop com.lab126.powerd preventScreenSaver 2>/dev/null)"
+    } > "$DIR/system_probe.txt" 2>/dev/null
     if [ "$CLOCK_MODE" = "local" ]; then
         if [ -f "$CLOCK_CONF" ]; then
             log "时钟：本机贴图，每 ${CLOCK_INTERVAL}s 一次，坐标 ($CLOCK_X,$CLOCK_Y)"
@@ -464,14 +590,31 @@ init() {
     echo $$ >"$PID_FILE" 2>/dev/null
 
     if [ "$STOP_FRAMEWORK" = "1" ]; then
-        # 停掉书架界面 + 浏览器进程，省内存也省电
-        /etc/init.d/framework stop >/dev/null 2>&1
-        initctl stop webreader >/dev/null 2>&1
+        # 停掉 Kindle 自己的界面。
+        #
+        # 以前这里写的是 `/etc/init.d/framework stop`，而实测这台 PW3 上
+        # **/etc/init.d 是个空目录**（system_probe.txt 里 `total 0`），那条命令
+        # 一直返回 **127 = 命令不存在** —— 也就是说界面**从来没被停过**。
+        # "碰一下就回主界面""系统时钟盖在画面上"两个症状根因就在这。
+        #
+        # 这台机器的界面归 upstart 管，任务名是从 `initctl list` 里查出来的，
+        # 不是猜的：framework（主框架）、pillow（书架/桌面，就是"主界面"本身）、
+        # statusbar（顶部状态栏 —— **它是独立任务**，只停 framework 的话那个
+        # 系统时钟照样刷）、webreader（浏览器）。
+        n_before=$(ps 2>/dev/null | wc -l)
+        for j in $UI_JOBS; do initctl stop "$j" >/dev/null 2>&1; done
         sleep 2
-        # 这一行是刻意留的存活证据：启动链是 framework →（KUAL / scriptlet）→ 我们，
-        # 杀 framework 有连坐把自己杀掉的风险（见 start.sh 的 setsid 说明）。
-        # 日志里有这行 = 我们扛过了那一下；没有 = 就是死在这儿，别往网络方向查。
-        log "framework 已停止，本进程存活（PID $$）"
+        n_after=$(ps 2>/dev/null | wc -l)
+        still=""
+        for j in $UI_JOBS; do
+            initctl status "$j" 2>/dev/null | grep -q "start/running" && still="$still$j"
+        done
+        # 三个信息缺一不可：进程数掉了多少（真停了的旁证）、哪些任务还在跑
+        # （被 respawn 拉起来的话必须换策略）、我们自己还活着没
+        # （启动链是 framework → scriptlet → 我们，杀 framework 有连坐风险，
+        #   靠 start.sh 的 setsid 脱离进程组；这一行第一次成为**有效**的存活证据，
+        #   以前它是在一条没执行的命令后面打印的，什么都没证明）。
+        log "界面任务已停（$UI_JOBS）· 本进程存活 PID $$ · 进程数 $n_before → $n_after · 仍在跑：${still:-无}"
     fi
     echo powersave >/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
     # 阻止系统屏保把我们的画面盖掉
@@ -482,7 +625,7 @@ main_loop() {
     next_image_at=0
     while [ -f "$RUN_FLAG" ]; do
         if [ -f "$STOP_FLAG" ]; then
-            cleanup
+            cleanup "有人放了 .stop（点了「停止信息屏」，或手动建的文件）"
         fi
 
         redrew=0
@@ -523,9 +666,9 @@ main_loop() {
 
         sleep_to_next_tick
     done
-    cleanup
+    cleanup "运行标记 .running 不在了（被外部清掉，或磁盘上文件消失）"
 }
 
-trap 'cleanup' TERM INT
+trap 'cleanup "收到 TERM/INT 信号（插 USB 进大容量模式、或系统回收进程）"' TERM INT
 init
 main_loop
