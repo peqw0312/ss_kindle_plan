@@ -19,6 +19,9 @@ sleep 2
 
 rm -f "$DIR/.running" "$DIR/.pid" "$DIR/.stop"
 eips -c >/dev/null 2>&1
+# 射频开关也在这里还回去：主进程可能已经被杀掉了、cleanup 根本没跑，
+# 这时 stop.sh 是唯一还会执行的路径。WiFi 关着不打开 = 用户"搜不到任何网络"。
+lipc-set-prop com.lab126.cmd wirelessEnable 1 >/dev/null 2>&1
 lipc-set-prop com.lab126.powerd preventScreenSaver 0 >/dev/null 2>&1
 
 # 不管之前有没有停掉原生界面，这里都重新拉起来，保证设备能正常用。

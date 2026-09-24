@@ -176,14 +176,10 @@ DEFAULTS: dict[str, Any] = {
         # 默认 false：数据源国内都能直连，跟着代理走反而会被绕到境外节点。
         "use_env_proxy": False,
     },
-    "cloud": {
-        # 云端出图服务（dashboard/app.py）在**哪几个时刻**重算一张，
-        # 形如 ["00:05", "12:00", "15:05"]，按 location.timezone 判定。
-        # **不能按服务器本地时间**：云端容器多半跑在 UTC，那样 00:05 会落到北京时间 08:05。
-        # 留空则退回下面的固定间隔。
-        "refresh_at": [],
-        "refresh_minutes": 15,
-    },
+    # 注意：这里**没有** cloud / refresh_at 那一段了。出图时刻曾经是自建服务
+    # （dashboard/app.py，已删）读的配置；GitHub 的 Actions 读不到本仓库的 YAML
+    # 之外的东西，cron 写在 .github/workflows/build.yml 里。
+    # 留在 config.yaml 里只会让人以为改它能换刷新时间 —— 那是个假开关。
     "output": {
         "png": "docs/dashboard.png",
         "html": "docs/index.html",

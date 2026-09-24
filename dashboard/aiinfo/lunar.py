@@ -488,6 +488,58 @@ _MAJOR = {"春节", "元宵节", "端午节", "中秋节", "重阳节", "除夕"
 
 
 # ===========================================================================
+#  法定节假日：国务院办公厅每年 11 月前后发下一年的通知，这里按年硬编码。
+#  表里没有的年份一律不显示倒计时/调休（宁可少一行，不能报错日子）。
+# ===========================================================================
+
+#: 每年：(名称, 放假起, 放假止, 调休上班日)。抄自国办 2026 年节假日通知。
+STATUTORY_HOLIDAYS: dict[int, tuple[tuple[str, date, date, tuple[date, ...]], ...]] = {
+    2026: (
+        ("元旦", date(2026, 1, 1), date(2026, 1, 3), (date(2026, 1, 4),)),
+        ("春节", date(2026, 2, 15), date(2026, 2, 23),
+         (date(2026, 2, 14), date(2026, 2, 28))),
+        ("清明节", date(2026, 4, 4), date(2026, 4, 6), ()),
+        ("劳动节", date(2026, 5, 1), date(2026, 5, 5), (date(2026, 5, 9),)),
+        ("端午节", date(2026, 6, 19), date(2026, 6, 21), ()),
+        ("中秋节", date(2026, 9, 25), date(2026, 9, 27), ()),
+        ("国庆节", date(2026, 10, 1), date(2026, 10, 7),
+         (date(2026, 9, 20), date(2026, 10, 10))),
+    ),
+}
+
+_WEEK_CN = ("一", "二", "三", "四", "五", "六", "日")
+
+
+def statutory_today(d: date) -> str:
+    """今天落在哪个法定节假日的放假区间里，不在就是空串。"""
+    for name, a, b, _work in STATUTORY_HOLIDAYS.get(d.year, ()):
+        if a <= d <= b:
+            return name
+    return ""
+
+
+def statutory_countdown(d: date) -> str:
+    """距下一个法定节假日放假还有几天。假期内、或当年没表，都返回空串。"""
+    if statutory_today(d):
+        return ""
+    for name, a, _b, _work in STATUTORY_HOLIDAYS.get(d.year, ()):
+        if a > d:
+            return f"距{name}还有 {(a - d).days} 天"
+    return ""
+
+
+def tiaoxiu_hint(d: date) -> str:
+    """未来 7 天里的调休上班日（周末补班）。同周说「本周X」，跨周给日期。"""
+    for _name, _a, _b, work in STATUTORY_HOLIDAYS.get(d.year, ()):
+        for w in work:
+            if d <= w <= d + timedelta(days=7):
+                if w.isocalendar()[:2] == d.isocalendar()[:2]:
+                    return f"本周{_WEEK_CN[w.weekday()]}调休上班"
+                return f"{w.month}月{w.day}日调休上班"
+    return ""
+
+
+# ===========================================================================
 #  对外汇总
 # ===========================================================================
 
@@ -520,6 +572,9 @@ class CalendarInfo(NamedTuple):
     ji: tuple[str, ...]
     chong: str               # 冲牛
     sha: str                 # 煞西
+    statutory: str = ""             # 今天所在的法定节假日名：国庆节
+    statutory_countdown: str = ""   # 距国庆节还有 6 天
+    tiaoxiu: str = ""               # 本周日调休上班
 
 
 def calendar_info(dt: datetime | date) -> CalendarInfo:
@@ -595,4 +650,7 @@ def calendar_info(dt: datetime | date) -> CalendarInfo:
         ji=ji,
         chong=chong,
         sha=sha,
+        statutory=statutory_today(d),
+        statutory_countdown=statutory_countdown(d),
+        tiaoxiu=tiaoxiu_hint(d),
     )

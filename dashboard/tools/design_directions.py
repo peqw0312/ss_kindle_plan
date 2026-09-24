@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """三个版面方向的真实成品图（1072×1448 灰度）+ 纵向预算报告 + 挑稿网页。
 
-和 `design_variants.py` 的区别：那个脚本换的是**同一套布局的字号预设**，
 这里换的是**栅格结构本身**（上分栏下通栏 / 全宽报 / 居中帖），所以布局代码长在本文件里。
+以前还有几个同类的提案脚本（各自 fork 一份布局代码），已经合并掉删了 ——
+**新提案改这个文件，不要再开新文件**，否则每轮多一个上千行的副本。
 但有两样东西故意复用真渲染器，不另画：
 
 - 天气图标：`aiinfo.render.Renderer.icon()`（E 套「柔雾·灰实心」，真机上就是它）
@@ -23,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -120,6 +122,15 @@ class Sheet:
             df = self.f.sans(int(font.size * 0.46), True)
             self.ink(x + w + 4, top, top + int((bottom - top) * 0.38), deg, df, fill)
             w += 4 + self.tw(deg, df)
+        return w
+
+    def big_width(self, s: str, font) -> int:
+        """big() 会占多宽（不画）。双栏报头要靠它决定右栏起点。"""
+        digits = s.rstrip("°")
+        deg = s[len(digits):]
+        w = self.tw(digits, font)
+        if deg:
+            w += 4 + self.tw(deg, self.f.sans(int(font.size * 0.46), True))
         return w
 
     def wrap(self, s, font, max_w, max_lines=9):
@@ -817,7 +828,7 @@ def _poster2_body(sh: Sheet, d: dict, P: dict, y: int) -> int:
 
     tf = sh.f.serif(P["temp"])
     df = sh.f.sans(P["desc"])
-    icon_w = int(P["temp"] * 0.78)
+    icon_w = int(P["temp"] * P.get("icon_ratio", 0.78))
     line_w = (icon_w + 26 + sh.tw(wx["temp"].rstrip("°"), tf) + 4
               + sh.tw("°", sh.f.sans(int(P["temp"] * 0.46), True)) + 26
               + sh.tw(wx["desc"], df))
@@ -968,6 +979,40 @@ def bat_d(sh, level):
 
 
 BAT_RECT = {"A": bat_a, "B": bat_b, "C": bat_c, "D": bat_d}
+
+# ---- 字阶放大三案（2026-09-22 第二轮反馈："字体再大几号、天气图标也大几号"）----
+# 底座都是丙 + 电量 B。放大必须从块距里扣：最坏情况（2 预警）的可用高度是定死的。
+POSTER3 = {
+    "甲 · 大一号": dict(
+        margin=64, line=30, day=224, lunar=62, meta=26, temp=118, desc=38,
+        warn=28, fc=30, fc_icon=64, q_name=26, q_price=54, q_pct=32,
+        gaps=dict(d1=30, d2=16, d3=22, d4=36, d5=36, d6=18, d7=28, d8=28, d9=22),
+        cells=False, icon_ratio=0.82,
+        note="字整体 +9% 左右：日期 224、温度 118、预报 30；主图标 96、预报图标 64。",
+    ),
+    "乙 · 大两号": dict(
+        margin=64, line=32, day=244, lunar=66, meta=28, temp=128, desc=40,
+        warn=28, fc=32, fc_icon=72, q_name=28, q_price=58, q_pct=32,
+        gaps=dict(d1=26, d2=14, d3=18, d4=32, d5=32, d6=16, d7=24, d8=26, d9=20),
+        cells=False, icon_ratio=0.84,
+        note="字 +18%：日期 244、温度 128、预报 32；主图标 108、预报图标 72。块距收到最紧。",
+    ),
+    "丙 · 大图标": dict(
+        margin=64, line=30, day=224, lunar=62, meta=26, temp=118, desc=38,
+        warn=28, fc=30, fc_icon=84, q_name=26, q_price=54, q_pct=32,
+        gaps=dict(d1=28, d2=14, d3=20, d4=34, d5=34, d6=16, d7=26, d8=26, d9=20),
+        cells=False, icon_ratio=1.0,
+        note="字同甲，但图标当第二主角：主图标和温度数字一样高（118），预报图标 84。",
+    ),
+    "丁 · 乙+大图标": dict(
+        margin=64, line=32, day=244, lunar=66, meta=28, temp=128, desc=40,
+        warn=28, fc=32, fc_icon=88, q_name=28, q_price=58, q_pct=32,
+        gaps=dict(d1=22, d2=12, d3=16, d4=26, d5=26, d6=14, d7=20, d8=22, d9=18),
+        cells=False, icon_ratio=1.0,
+        note="乙的字（日期 244 / 温度 128）+ 丙的图标比例：主图标 128、预报图标 88。"
+             "块距收到最紧给图标让地方。",
+    ),
+}
 BAT_NOTE = {
     "A": "五格电池 + 数字。最像电池，远看格子数就是电量。",
     "B": "百分比大字 + 一根进度条。数字最大最好读，条只是辅助。",
@@ -975,11 +1020,329 @@ BAT_NOTE = {
     "D": "极简灰字 + 小电池。最安静，把右上角彻底让给留白。",
 }
 
+# ---- 巨大四案（2026-09-22 第三轮反馈："还是小、还是空，要巨大的"）----------
+# "空"的根源不只是字号：居中单栏每行墨迹只占中间一条，两侧整条留白。
+# 所以这一轮除了放大还动结构 —— 乙用双栏报头吃宽度，丙用横带把整页填死。
+# 甲/丁仍是居中单栏，靠砍行（干支节气行、指数行）换字号。
+POSTER4 = {
+    "甲 · 单栏砍干支": dict(
+        mode="stack", meta=False, quotes=True,
+        margin=64, line=34, day=288, lunar=72, meta_fs=28, temp=168, desc=44,
+        warn=28, fc=34, fc_icon=100, q_name=28, q_price=62, q_pct=32,
+        gaps=dict(d1=16, d2=8, d3=14, d4=0, d5=18, d6=10, d7=14, d8=16, d9=14),
+        icon_ratio=1.0,
+        note="结构不变，只砍干支节气那一行换字号：日期 288 / 温度 168 / 主图标 168。"
+             "代价：黄历信息全没（农历还在）。",
+    ),
+    "乙 · 双栏报头": dict(
+        mode="mast", meta=True, quotes=True,
+        margin=64, line=30, day=420, lunar=84, lunar_day=104, tag=52,
+        place_fs=32, meta_fs=28, temp=160, desc=46,
+        warn=32, fc=38, fc_icon=112, q_name=30, q_price=62, q_pct=36,
+        gaps=dict(d1=18, d2=10, d3=10, d4=0, d5=20, d6=12, d7=16, d8=18, d9=16),
+        icon_ratio=0.95,
+        note="双栏报头：左上角挂农历月 + 公历月周，左栏日期 420 + 农历日（十二日，104），"
+             "右栏图标 + 温度 + 天气词 + 地名。一行不砍。",
+    ),
+    "丙 · 横带满版": dict(
+        mode="bands", meta=True, quotes=True,
+        margin=64, line=36, day=240, lunar=64, meta_fs=28, temp=232, desc=56,
+        warn=28, fc=36, fc_icon=110, q_name=32, q_price=60, q_pct=36,
+        gaps=dict(d1=18, d2=10, d3=10, d4=0, d5=20, d6=12, d7=16, d8=18, d9=16),
+        icon_ratio=0.85,
+        note="整页切成四条横带（日历 / 天气 / 预报 / 指数），发丝线分隔，带内左对齐。"
+             "高度按带分死，页面永远填满，没有一处整块留白；温度 240 全屏最大。",
+    ),
+    "丁 · 海报极限": dict(
+        mode="stack", meta=False, quotes=False,
+        margin=64, line=36, day=340, lunar=88, meta_fs=28, temp=200, desc=50,
+        warn=32, fc=38, fc_icon=120, q_name=30, q_price=64, q_pct=34,
+        gaps=dict(d1=16, d2=10, d3=18, d4=0, d5=22, d6=14, d7=16, d8=20, d9=0),
+        icon_ratio=1.0,
+        note="纯海报：砍干支行 + 砍指数行，只留日历 / 天气 / 预报。日期 340 / 温度 200 /"
+             "主图标 200 / 预报图标 120。信息最少、字最大。",
+    ),
+}
+
+
+def _p4_weather(sh: Sheet, d: dict, P: dict, y: int, cx: int) -> int:
+    wx = d["wx"]
+    tf = sh.f.serif(P["temp"])
+    df = sh.f.sans(P["desc"])
+    icon_w = int(P["temp"] * P.get("icon_ratio", 1.0))
+    line_w = (icon_w + 26 + sh.tw(wx["temp"].rstrip("°"), tf) + 4
+              + sh.tw("°", sh.f.sans(int(P["temp"] * 0.46), True)) + 26
+              + sh.tw(wx["desc"], df))
+    x = cx - line_w // 2
+    sh.icons.icon(x + icon_w / 2, y + P["temp"] * 0.40, icon_w, wx["icon"], SOFT)
+    x += icon_w + 26
+    x += sh.big(x, y, y + P["temp"], wx["temp"], tf) + 26
+    sh.ink(x, y + P["temp"] * 0.36, y + P["temp"], wx["desc"], df, SOFT)
+    return y + P["temp"]
+
+
+def _p4_warn(sh: Sheet, d: dict, P: dict, y: int, cx: int, x1: int) -> int:
+    wx = d["wx"]
+    if not wx["warn"]:
+        return y
+    ww = max(sh.tw(t, sh.f.sans(P["warn"])) for t in wx["warn"][:2])
+    bw = sh.tw("预警", sh.f.sans(24)) + 24
+    x0 = cx - (bw + 14 + ww) // 2
+    for i, t in enumerate(wx["warn"][:2]):
+        used = sh.stamp(x0, y - 5, "预警", sh.f.sans(24)) if i == 0 else bw
+        sh.t((x0 + used + 14, y),
+             sh.clip(t, sh.f.sans(P["warn"]), x1 - x0 - used - 14),
+             sh.f.sans(P["warn"]), INK)
+        y += P["warn"] + 12
+    return y
+
+
+def _p4_fc(sh: Sheet, d: dict, P: dict, y: int, cx: int) -> int:
+    wx = d["wx"]
+    fw = 236
+    x0 = cx - fw * len(wx["fc"][:4]) // 2
+    r1 = P["fc_icon"] + 8
+    r2 = r1 + P["fc"] + 12
+    r3 = r2 + P["fc"] + 12
+    for i, (label, kind, desc, hi, lo) in enumerate(wx["fc"][:4]):
+        gx = x0 + i * fw + fw // 2
+        sh.icons.icon(gx, y + P["fc_icon"] // 2, P["fc_icon"], kind, SOFT)
+        sh.ink(gx, y + r1, y + r1 + P["fc"] + 8, label, sh.f.sans(P["fc"]), GRAY,
+               anchor="mt")
+        sh.ink(gx, y + r2, y + r2 + P["fc"] + 8,
+               sh.clip(desc, sh.f.sans(P["fc"]), fw - 8), sh.f.sans(P["fc"]), INK,
+               anchor="mt")
+        sh.ink(gx, y + r3, y + r3 + P["fc"] + 8, hi + " / " + lo, sh.f.sans(P["fc"]),
+               SOFT, anchor="mt")
+    return y + r3 + P["fc"] + 8
+
+
+def _p4_quotes(sh: Sheet, d: dict, P: dict, y: int, m: int, x1: int) -> int:
+    cw3 = (x1 - m) // 3
+    for i, (name, price, pct) in enumerate(d["quotes"][:3]):
+        gx = m + i * cw3 + cw3 // 2
+        sh.ink(gx, y, y + P["q_name"] + 8, name, sh.f.sans(P["q_name"]), GRAY,
+               anchor="mt")
+        sh.ink(gx, y + P["q_name"] + 12, y + P["q_name"] + 12 + P["q_price"] + 6,
+               price, sh.f.sans(P["q_price"], True), INK, anchor="mt")
+        py = y + P["q_name"] + 12 + P["q_price"] + 16
+        up = pct >= 0
+        pf = sh.f.sans(P["q_pct"])
+        pw = sh.tw(f"{pct:+.2f}%", pf)
+        sh.trend(gx - pw // 2 - 22, py + 8, up, 14)
+        sh.ink(gx + 6, py, py + P["q_pct"] + 8, f"{pct:+.2f}%", pf,
+               INK if up else SOFT, anchor="mt")
+    return y + P["q_name"] + 12 + P["q_price"] + 16 + P["q_pct"] + 8
+
+
+def _poster4_stack(sh: Sheet, d: dict, P: dict, y: int) -> int:
+    """居中单栏（甲/丁）。和帖 v2 同结构，只是行可选、字号巨大。"""
+    M, X1 = P["margin"], W - P["margin"]
+    CW = X1 - M
+    cx = W // 2
+    g = P["gaps"]
+    cal = d["cal"]
+
+    sh.ink(cx, y, y + 44, " · ".join([cal["month"], cal["week"], d["place"]]),
+           sh.f.sans(P["line"]), GRAY, anchor="mt")
+    y += 44 + g["d1"]
+    sh.ink(cx, y, y + P["day"], cal["day"], sh.f.serif(P["day"]), anchor="mt")
+    y += P["day"] + g["d2"]
+    sh.ink(cx, y, y + P["lunar"], cal["lunar"], sh.f.serif(P["lunar"]), anchor="mt")
+    y += P["lunar"] + g["d3"]
+    if P["meta"]:
+        meta = " · ".join(cal["ganzhi"] + cal["term"])
+        sh.ink(cx, y, y + 36, sh.clip(meta, sh.f.sans(P["meta_fs"]), CW),
+               sh.f.sans(P["meta_fs"]), GRAY, anchor="mt")
+        y += 36 + g["d4"]
+    sh.rule(y, cx - 140, cx + 140, 3, LIGHT)
+    y += g["d5"]
+    y = _p4_weather(sh, d, P, y, cx) + g["d6"]
+    y = _p4_warn(sh, d, P, y, cx, X1) + g["d7"]
+    y = _p4_fc(sh, d, P, y, cx) + g["d8"]
+    if P["quotes"]:
+        sh.rule(y, M, X1, 3, LIGHT)
+        y += g["d9"]
+        y = _p4_quotes(sh, d, P, y, M, X1)
+    return y
+
+
+def _poster4_mast(sh: Sheet, d: dict, P: dict, y: int) -> int:
+    """双栏报头（乙）：左上角挂农历月 + 公历月周；左栏日期 + 农历日，右栏图标温度天气词地名；
+    报头以下回到通栏。"""
+    M, X1 = P["margin"], W - P["margin"]
+    CW = X1 - M
+    g = P["gaps"]
+    cal, wx = d["cal"], d["wx"]
+
+    lm = re.match(r"^(.*月)(.+)$", cal["lunar"])
+    tag, lday = (lm.group(1), lm.group(2) + "日") if lm else ("", cal["lunar"])
+    if tag:
+        twd = sh.ink(M, y, y + P["tag"], tag, sh.f.serif(P["tag"]))
+        sh.ink(M + twd + 20, y + 4, y + P["tag"],
+               " · ".join([cal["month"], cal["week"]]), sh.f.sans(P["line"]), GRAY)
+    y += P["tag"] + 10
+
+    lf, lf2 = sh.f.serif(P["day"]), sh.f.serif(P["lunar_day"])
+    meta = " · ".join(cal["ganzhi"] + cal["term"])
+    lw = max(sh.tw(cal["day"], lf), sh.tw(lday, lf2))
+    sh.ink(M, y, y + P["day"], cal["day"], lf)
+    sh.ink(M, y + P["day"] + g["d2"], y + P["day"] + g["d2"] + P["lunar_day"],
+           lday, lf2)
+    lh = P["day"] + g["d2"] + P["lunar_day"]
+
+    x0 = M + lw + 40
+    sh.vrule(M + lw + 20, y + 8, y + lh - 8, 3, LIGHT)
+    rw = X1 - x0
+    tf = sh.f.serif(P["temp"])
+    iw = int(P["temp"] * P.get("icon_ratio", 0.95))
+    tw_temp = sh.big_width(wx["temp"], tf)
+    if iw + 24 + tw_temp > rw:
+        iw = max(60, rw - 24 - tw_temp)
+    stack = P["temp"] + 10 + P["desc"] + 8 + P["place_fs"] + 8
+    cy = y + (lh - stack) // 2
+    sh.icons.icon(x0 + iw / 2, cy + P["temp"] * 0.40, iw, wx["icon"], SOFT)
+    sh.big(x0 + iw + 24, cy, cy + P["temp"], wx["temp"], tf)
+    dy = cy + P["temp"] + 10
+    sh.ink(x0, dy, dy + P["desc"] + 8, wx["desc"], sh.f.sans(P["desc"]), SOFT)
+    py = dy + P["desc"] + 8
+    sh.ink(x0, py, py + P["place_fs"] + 8, d["place"], sh.f.sans(P["place_fs"]), GRAY)
+    y += lh + 8
+    sh.ink(M, y, y + 36, sh.clip(meta, sh.f.sans(P["meta_fs"]), CW),
+           sh.f.sans(P["meta_fs"]), GRAY)
+    y += 36 + g["d5"]
+
+    cx = W // 2
+    y = _p4_warn(sh, d, P, y, cx, X1) + g["d7"]
+    y = _p4_fc(sh, d, P, y, cx) + g["d8"]
+    sh.rule(y, M, X1, 3, LIGHT)
+    y += g["d9"]
+    return _p4_quotes(sh, d, P, y, M, X1)
+
+
+def _poster4_bands(sh: Sheet, d: dict, P: dict, top: int, foot_top: int) -> int:
+    """横带满版（丙）：四条带按权重分死整页高度，带内垂直居中、左对齐。
+    返回最紧那条带的剩余高度（= 这版的"余量"）。"""
+    M, X1 = P["margin"], W - P["margin"]
+    CW = X1 - M
+    cal, wx = d["cal"], d["wx"]
+    total = foot_top - top
+    weights = (0.24, 0.31, 0.25, 0.20)
+    hs = [int(total * w) for w in weights]
+    hs[-1] = total - sum(hs[:-1])
+    slack = 10 ** 6
+    y = top
+    for bi, h in enumerate(hs):
+        if bi:
+            sh.rule(y - 12, M, X1, 3, LIGHT)
+        y0, y1 = y, y + h
+        if bi == 0:
+            lf = sh.f.serif(P["day"])
+            day_w = sh.tw(cal["day"], lf)
+            cy = y0 + (h - P["day"]) // 2
+            sh.ink(M, cy, cy + P["day"], cal["day"], lf)
+            rx = M + day_w + 36
+            sh.vrule(M + day_w + 18, y0 + 24, y1 - 24, 3, LIGHT)
+            stack = 44 + 8 + P["lunar"] + 8 + 36
+            sy = y0 + (h - stack) // 2
+            sh.ink(rx, sy, sy + 44,
+                   " · ".join([cal["month"], cal["week"], d["place"]]),
+                   sh.f.sans(P["line"]), GRAY)
+            sy += 44 + 8
+            sh.ink(rx, sy, sy + P["lunar"], cal["lunar"], sh.f.serif(P["lunar"]))
+            sy += P["lunar"] + 8
+            meta = " · ".join(cal["ganzhi"] + cal["term"])
+            sh.ink(rx, sy, sy + 36, sh.clip(meta, sh.f.sans(P["meta_fs"]), X1 - rx),
+                   sh.f.sans(P["meta_fs"]), GRAY)
+            used = max(P["day"], stack)
+        elif bi == 1:
+            iw = int(P["temp"] * P.get("icon_ratio", 0.85))
+            tf = sh.f.serif(P["temp"])
+            row = P["temp"]
+            nwarn = len(wx["warn"][:2])
+            stack = row + (12 + nwarn * (P["warn"] + 12) if nwarn else 0)
+            cy = y0 + (h - stack) // 2
+            sh.icons.icon(M + iw / 2, cy + P["temp"] * 0.40, iw, wx["icon"], SOFT)
+            x = M + iw + 28
+            x += sh.big(x, cy, cy + P["temp"], wx["temp"], tf) + 28
+            sh.ink(x, cy + P["temp"] * 0.36, cy + P["temp"], wx["desc"],
+                   sh.f.sans(P["desc"]), SOFT)
+            wy = cy + row + 12
+            if nwarn:
+                bw = sh.tw("预警", sh.f.sans(24)) + 24
+                for i, t in enumerate(wx["warn"][:2]):
+                    used_w = sh.stamp(M, wy - 5, "预警", sh.f.sans(24)) if i == 0 else bw
+                    sh.t((M + used_w + 14, wy),
+                         sh.clip(t, sh.f.sans(P["warn"]), X1 - M - used_w - 14),
+                         sh.f.sans(P["warn"]), INK)
+                    wy += P["warn"] + 12
+            used = stack
+        elif bi == 2:
+            cw4 = CW // 4
+            r1 = P["fc_icon"] + 8
+            r2 = r1 + P["fc"] + 12
+            r3 = r2 + P["fc"] + 12
+            stack = r3 + P["fc"] + 8
+            cy = y0 + (h - stack) // 2
+            for i, (label, kind, desc, hi, lo) in enumerate(wx["fc"][:4]):
+                gx = M + i * cw4 + cw4 // 2
+                sh.icons.icon(gx, cy + P["fc_icon"] // 2, P["fc_icon"], kind, SOFT)
+                sh.ink(gx, cy + r1, cy + r1 + P["fc"] + 8, label,
+                       sh.f.sans(P["fc"]), GRAY, anchor="mt")
+                sh.ink(gx, cy + r2, cy + r2 + P["fc"] + 8,
+                       sh.clip(desc, sh.f.sans(P["fc"]), cw4 - 12),
+                       sh.f.sans(P["fc"]), INK, anchor="mt")
+                sh.ink(gx, cy + r3, cy + r3 + P["fc"] + 8, hi + " / " + lo,
+                       sh.f.sans(P["fc"]), SOFT, anchor="mt")
+            used = stack
+        else:
+            cw3 = CW // 3
+            stack = P["q_name"] + 12 + P["q_price"] + 16 + P["q_pct"] + 8
+            cy = y0 + (h - stack) // 2
+            for i, (name, price, pct) in enumerate(d["quotes"][:3]):
+                gx = M + i * cw3 + cw3 // 2
+                sh.ink(gx, cy, cy + P["q_name"] + 8, name, sh.f.sans(P["q_name"]),
+                       GRAY, anchor="mt")
+                sh.ink(gx, cy + P["q_name"] + 12,
+                       cy + P["q_name"] + 12 + P["q_price"] + 6, price,
+                       sh.f.sans(P["q_price"], True), INK, anchor="mt")
+                py = cy + P["q_name"] + 12 + P["q_price"] + 16
+                up = pct >= 0
+                pf = sh.f.sans(P["q_pct"])
+                pw = sh.tw(f"{pct:+.2f}%", pf)
+                sh.trend(gx - pw // 2 - 22, py + 8, up, 14)
+                sh.ink(gx + 6, py, py + P["q_pct"] + 8, f"{pct:+.2f}%", pf,
+                       INK if up else SOFT, anchor="mt")
+            used = stack
+        slack = min(slack, h - used)
+        y = y1
+    return slack
+
+
+def layout_poster4(sh: Sheet, d: dict, P: dict) -> int:
+    foot_top = sh.footer(d, P["margin"], W - P["margin"])
+    # 乙的左上角角标和电量同一行起画，真正贴到角上；其余版式仍让开电量矩形
+    top = BAT_BOX[1] if P["mode"] == "mast" else BAT_BOX[3] + 16
+    if P.get("bat"):
+        BAT_RECT[P["bat"]](sh, d.get("battery", 86))
+    if P["mode"] == "bands":
+        return _poster4_bands(sh, d, P, top, foot_top)
+    body = _poster4_mast if P["mode"] == "mast" else _poster4_stack
+    probe = Sheet(sh.f)
+    height = body(probe, d, P, 0)
+    extra = foot_top - top - height
+    y = top + max(0, extra // 2)
+    y1 = body(sh, d, P, y)
+    sh.block("主体", y, y1)
+    return extra
+
 
 def build_poster2_html(shots, rect=CLOCK,
                        title="帖 v2 · 空间配平三案（字放大 + 整组垂直居中）",
                        sub="三张都是 1072×1448 真图、最坏情况内容。红虚线 = 时钟留白区。"
-                           "块距写死不随内容伸缩：哪天没有预警，整组只是往下平移一点，字不会变小变大。") -> str:
+                           "块距写死不随内容伸缩：哪天没有预警，整组只是往下平移一点，字不会变小变大。",
+                       cap="最坏情况（2 预警 / 4 预报 / 3 指数 / 农历干支节气全开）·"
+                           "上下留白各约 <b>{slack}px</b>", half=True) -> str:
     cl, ct = rect[0] / W * 100, rect[1] / H * 100
     cw, ch = (rect[2] - rect[0]) / W * 100, (rect[3] - rect[1]) / H * 100
     cards = []
@@ -990,8 +1353,7 @@ def build_poster2_html(shots, rect=CLOCK,
       <p class="d">{note}</p>
       <div class="shot"><img src="{png}" alt="{name}">
         <span class="clock" style="left:{cl}%;top:{ct}%;width:{cw}%;height:{ch}%"></span></div>
-      <figcaption>最坏情况（2 预警 / 4 预报 / 3 指数 / 农历干支节气全开）·
-        上下留白各约 <b>{slack // 2}px</b></figcaption>
+      <figcaption>{cap.format(slack=slack // 2 if half else slack)}</figcaption>
     </figure>""")
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -1046,8 +1408,62 @@ def main() -> int:
                     help="只出「帖 v2」空间配平三案 + poster2.html")
     ap.add_argument("--poster3", action="store_true",
                     help="丙 + 砍时钟留白 + 四版电量样式 + poster3.html")
+    ap.add_argument("--bigtype", action="store_true",
+                    help="字阶放大三案（丙 + 电量 B）+ bigtype.html")
+    ap.add_argument("--huge", action="store_true",
+                    help="巨大四案（含双栏报头 / 横带满版两种新结构）+ huge.html")
     args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
+
+    if args.huge:
+        shots = []
+        for name, P in POSTER4.items():
+            P = dict(P, bat="B")
+            sh = Sheet(Fonts())
+            slack = layout_poster4(sh, worst_data(), P)
+            floor = 28 if P["mode"] == "bands" else 40
+            if slack < floor:
+                raise SystemExit(f"{name}: 余量 {slack}px 低于安全线 {floor}")
+            png = OUT / f"巨-{name.split(' ')[0]}.png"
+            sh.img.save(png, format="PNG", optimize=True)
+            shots.append((name, png.name, slack, P["note"]))
+            print(f"{name}: 余量 {slack}px -> {png.name}")
+        (OUT / "huge.html").write_text(
+            build_poster2_html(
+                shots, rect=BAT_BOX, half=False,
+                title="巨大四案（字再大一号，结构也动）",
+                sub="四张都是 1072×1448 真图、最坏情况内容。红虚线 = 电量精灵图位置。"
+                    "甲/丁 = 居中单栏靠砍行换字号；乙 = 双栏报头吃掉两侧留白；"
+                    "丙 = 四条横带把整页填死。余量含义见每张图下方。",
+                cap="最坏情况（2 预警 / 4 预报 / 3 指数）· 余量 <b>{slack}px</b>"
+                    "（居中版 = 上下合计；横带版 = 最紧一条带的剩余）"),
+            encoding="utf-8")
+        print(f"ok -> {OUT / 'huge.html'}")
+        return 0
+
+    if args.bigtype:
+        shots = []
+        for name, P in POSTER3.items():
+            P = dict(P, bat="B", top=BAT_BOX[3] + 16)
+            sh = Sheet(Fonts())
+            slack = layout_poster2(sh, worst_data(), P)
+            # 时钟已砍，旧时钟矩形里除了电量矩形都是自由留白；
+            # 首行墨迹从 top+6 起（top = 电量矩形下沿 +16），结构上不会碰电量矩形
+            if slack < 40:
+                raise SystemExit(f"{name}: 余量 {slack}px 低于安全线 40")
+            png = OUT / f"大字-{name.split(' ')[0]}.png"
+            sh.img.save(png, format="PNG", optimize=True)
+            shots.append((name, png.name, slack, P["note"]))
+            print(f"{name}: 余量 {slack}px -> {png.name}")
+        (OUT / "bigtype.html").write_text(
+            build_poster2_html(shots, rect=BAT_BOX,
+                               title="字阶放大三案（丙 + 电量 B）",
+                               sub="三张都是 1072×1448 真图、最坏情况内容（2 预警 / 4 预报 / 3 指数）。"
+                                   "红虚线 = 电量精灵图位置。放大从块距里扣，所以三版的留白比上一轮紧；"
+                                   "余量都按有 2 条预警那天算，仍 ≥40px 安全线。"),
+            encoding="utf-8")
+        print(f"ok -> {OUT / 'bigtype.html'}")
+        return 0
 
     if args.poster3:
         base = dict(POSTER2["丙 · 疏朗"])

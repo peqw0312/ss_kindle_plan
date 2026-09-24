@@ -3,19 +3,18 @@
 #  AI 信息屏 · Kindle 端主循环
 #
 #  省电逻辑说明（这是整个项目最关键的一段，别随手改）：
-#    心跳是**一分钟一次**。每次醒来只干两件事：看看该不该拉整图，然后把时钟
-#    贴上去。贴完立刻 `echo mem` 让设备睡死，等 RTC 闹钟叫下一分钟。
-#    设备睡着时 CPU 基本不耗电，墨水屏保持画面本身是零功耗的。
+#    设备绝大多数时间在 `echo mem` 里睡死，墨水屏保持画面本身零功耗。
+#    醒来的节奏由两件事决定，取更短的那个：
+#      · 整图时刻表 —— 现在在设备本机算（config.sh 的 REFRESH_AT），一天 4~5 次
+#      · STOP_CHECK_MAX_SLEEP —— 为了「停止信息屏」能在 10 分钟内生效，
+#        再长的觉也切成 10 分钟一段来睡（一天醒 144 次，仍然远比贴钟时省）
 #
 #    必须用 `echo mem > /sys/power/state` 强制休眠，而不是靠 lipc 的
 #    rtcWakeup —— 后者在多个机型上被实测证明"叫不醒"，这是别人的坑，别再踩。
 #
-#  为什么心跳要这么密：
-#    时钟是 Kindle 用**自己的系统时间**画的（CLOCK_MODE=local），
-#    一分钟贴一次才能保证屏幕上显示的就是当前时间。整图里时钟那块是留白的，
-#    服务端因此一天只要出四次图，不必为了"时间准"反复拉天气和行情。
-#    代价是唤醒次数从每天几十次涨到 1440 次 —— 这是本方案唯一的真实开销，
-#    嫌费电就把 CLOCK_INTERVAL 调大。
+#  CLOCK_MODE=local 是另一套故事：那时候每分钟醒一次贴时钟精灵图（1440 次/天），
+#  续航直接崩掉。2026-09-22 已经把时钟砍了（CLOCK_MODE=off），
+#  上面那两档节奏才是现在的真实行为。
 # =============================================================================
 
 DIR=/mnt/us/extensions/aistatus
@@ -75,9 +74,15 @@ refresh_count=0
 consecutive_failures=0
 clock_warned=0          # 精灵图缺失只报一次，不然日志会被刷爆
 battery_warned=0        # 同上，电量精灵图缺失也只报一次
+last_battery_lvl=""     # 上一次贴上去的是哪一档。档位没变就不重复贴、不写日志
 sync_disabled=0         # 校时失败一次就别再试，免得反复折腾
 notice_shown=0          # 低电量提示占着整屏时不贴时钟
 woken_early=0           # 本轮是被人为唤醒的（不是闹钟），要重贴整图
+taps=0                  # 连点计数（人为唤醒连续几次就算"主动要退出"）
+last_tap_at=0           # 上一次人为唤醒的时刻
+sleep_logged=0          # 休眠实测只记头三次，第四次起只在真睡够时记一行
+suspend_bounces=0       # 连续"echo mem 秒弹回"的次数
+bounce_warned=0         # 空转警告只喊一次
 
 # ---------------------------------------------------------------------------
 log() {
@@ -155,8 +160,9 @@ image_is_sane() {
 }
 
 # ---------------------------------------------------------------------------
-# 设备时间校准。时钟由本机画之后，设备时间错了整个功能就没意义了，
-# 所以每个响应都带上 X-Epoch，这里拿它对表。
+# 设备时间校准：拿响应头里的 X-Epoch 对表。
+# 只有我们自己跑的 HTTP 服务才发这个头，GitHub 不发 —— 那时这个函数找不到
+# 头就静默返回，不报错也不校（故意的：缺头是常态，不是故障）。
 sync_clock() {
     [ "$CLOCK_SYNC" = "1" ] || return 0
     [ "$sync_disabled" = "1" ] && return 0
@@ -199,12 +205,13 @@ sync_clock() {
 # ---------------------------------------------------------------------------
 # 问服务器「下一次什么时候来才有新图」。
 #
-# 没有 X-Next-Image 这个头的话，本机只能按 UPDATE_INTERVAL 瞎轮询：一天连 24 次
-# WiFi、下 24 张 61KB 的图，而云端其实只换 4 次 —— 其中 20 趟拿回来的是完全相同
-# 的字节。云端现在把时刻表算好发下来，下载次数就降到一天四五次。
+# 只有我们自己跑的 HTTP 服务才会发这个头。GitHub 的 raw 地址是静态文件，
+# 发不了自定义头，所以走 GitHub 时这个函数基本恒返回 1 —— 这是预期的，
+# 时刻表由下面的 seconds_to_next_slot 在本机算。留着这条分支是因为它无副作用：
+# 哪天把自建服务当备用出口再开起来，不用改这边一行。
 #
-# 局域网那台 serve.py 不发这个头（它只是静态发文件，不参与调度），
-# 所以走备用地址时自动退回原来的轮询节奏，不用为它单独配什么。
+# 单位是 epoch 秒；被中间层改坏、或设备时间被校歪时，只接受
+# 「在未来、且不超过 12 小时」的值，否则退回本机节奏。
 next_image_from_headers() {
     [ -s "$HDR" ] || return 1
     raw=$(grep -i '^[[:space:]]*x-next-image:' "$HDR" 2>/dev/null | tail -n 1 | tr -cd '0-9')
@@ -250,6 +257,11 @@ stamp_clock() {
 # 贴电量。和贴时钟同一条路：整图右上角是留白的，刷完整图补这一小块。
 # 缺精灵图 / 读不到电量都只记一次日志然后跳过 —— 右上角留白是无害的，
 # 不能因为电量把整轮刷新搞失败。
+#
+# 参数给 `force` 表示"整屏刚被重画过，那块现在是空的，必须贴"。不给参数就走
+# 档位缓存：这一步现在每次心跳都跑（默认 10 分钟一次），而电量一小时才挪一档
+# 左右 —— 重复贴同一张图既费电，又会把日志灌满（只留 500 行，灌满了真要看的
+# 故障记录就被冲掉了）。
 stamp_battery() {
     [ "$BATTERY_MODE" = "local" ] || return 0
 
@@ -266,6 +278,9 @@ stamp_battery() {
     [ -n "$bat" ] || return 1
     lvl=$(( (bat + 5) / 10 * 10 ))
     [ "$lvl" -gt 100 ] && lvl=100
+    if [ "$1" != "force" ] && [ "$lvl" = "$last_battery_lvl" ]; then
+        return 0
+    fi
     sprite="$BATTERY_DIR/$(printf '%03d' "$lvl").png"
     if [ ! -f "$sprite" ]; then
         if [ "$battery_warned" = "0" ]; then
@@ -276,6 +291,10 @@ stamp_battery() {
     fi
 
     eips -g "$sprite" -w "$BATTERY_WAVE" -x "$BATTERY_X" -y "$BATTERY_Y" >/dev/null 2>&1
+    last_battery_lvl=$lvl
+    # 成功也要留证据。以前只有失败才写日志，结果"电量到底准不准、有没有真贴上去"
+    # 在日志里完全看不出来 —— 2026-09-24 查一次电量就得重新插拔一轮，就是因为没记录。
+    log "电量 ${bat}% → 贴 $(basename "$sprite") 于 ($BATTERY_X,$BATTERY_Y)"
 }
 
 # ---------------------------------------------------------------------------
@@ -324,7 +343,14 @@ is_low_battery() {
 
 current_interval() {
     hour=$(date +%H)
-    hour=$((10#$hour))
+    # 别用 `$((10#$hour))`：busybox 的 ash 不保证认这种带基数的写法，一报错
+    # 这个函数就**输出空**，于是 plan_next_image 里 `$((pnow + 空))` 跟着报错、
+    # next_image_at 变成空串 —— 而空串在主循环里会让 `[ now -ge "" ]` 直接返回
+    # 假，结果"永远不到点"，屏幕冻在一张图上 79 分钟，日志一个字都不写。
+    # 但也不能退回 `$((hour))`：08 / 09 会被当八进制报错，是同一个坑。
+    # 剥掉前导零最稳。
+    hour=${hour#0}
+    [ -n "$hour" ] || hour=0
     if is_low_battery; then
         echo "$LOW_BATTERY_INTERVAL"
     elif [ "$hour" -lt "$ACTIVE_START" ] || [ "$hour" -ge "$ACTIVE_END" ]; then
@@ -335,9 +361,57 @@ current_interval() {
 }
 
 # ---------------------------------------------------------------------------
+# 本机时刻表：算出"距离下一个出图点还有多少秒"。
+#
+# 走 GitHub 之后这一步必须在设备上做 —— raw.githubusercontent.com 是静态文件，
+# 发不了自定义头，云端那种"服务器告诉你几点再来"没有了。
+#
+# 全程只用整数加减乘和 date 的字段，不碰 `date -d`：busybox 的 date 对 `-d`
+# 的支持随固件版本变，解析失败会**静默**返回空，那就又是"屏幕冻一整天、
+# 日志一个字不写"那一类坑。
+hm_to_min() {
+    # 先卡格式再算数。`${#1}` 取长度这种写法在 ash 上没把握，用 case 表达同一件事。
+    case "$1" in
+        [01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9]) ;;
+        *) return 1 ;;
+    esac
+    h=${1%%:*}
+    m=${1##*:}
+    # 别用 $((10#$h))：ash 不保证认基数写法。剥前导零即可，
+    # 但"00" 剥完剩 "0"、"08" 剥完剩 "8"，两种都要覆盖到。
+    h=${h#0}; [ -n "$h" ] || h=0
+    m=${m#0}; [ -n "$m" ] || m=0
+    echo $(( h * 60 + m ))
+}
+
+now_minutes() {
+    hm_to_min "$(date +%H:%M 2>/dev/null)"
+}
+
+# 输出：秒。REFRESH_AT 为空或全写坏了 → 返回 1，让调用方退回固定间隔。
+seconds_to_next_slot() {
+    [ -n "$REFRESH_AT" ] || return 1
+    now_min=$(now_minutes)
+    [ -n "$now_min" ] || return 1
+    best=-1
+    for slot in $REFRESH_AT; do
+        sm=$(hm_to_min "$slot")
+        [ -n "$sm" ] || continue
+        d=$(( sm - now_min ))
+        # 已经过了就顺延到明天那一档。等于 0 也算过 —— 此刻图还在 Actions 里跑。
+        [ "$d" -gt 0 ] || d=$(( d + 1440 ))
+        if [ "$best" -lt 0 ] || [ "$d" -lt "$best" ]; then best=$d; fi
+    done
+    [ "$best" -gt 0 ] || return 1
+    echo $(( best * 60 + ${REFRESH_LAG:-600} ))
+}
+
+# ---------------------------------------------------------------------------
 # 定好下一次拉整图的时刻。优先级是刻意的：
-#   低电量 > 云端时刻表 > 本机固定间隔
-# 低电量必须排在最前面 —— 云端不知道这台设备的电量，那种时候省电比"几点换新图"重要。
+#   低电量 > 云端下发的时刻表 > 本机时刻表 > 本机固定间隔
+# 低电量必须排在最前面 —— 服务器不知道这台设备的电量，那种时候省电比"几点换新图"重要。
+# 中间那条 X-Next-Image 分支留着不删：哪天自己再跑一个 HTTP 服务当备用出口，
+# 它不用改这边一行就立刻生效；而 GitHub 不发这个头，函数直接返回 1 走到下一档。
 plan_next_image() {
     pnow=$(now_epoch)
     if is_low_battery; then
@@ -350,13 +424,20 @@ plan_next_image() {
         echo "$sched"
         return 0
     fi
+    sched=$(seconds_to_next_slot)
+    if [ -n "$sched" ]; then
+        log "按本机时刻表（${REFRESH_AT}），约 $(( sched / 60 )) 分钟后再来取"
+        echo $((pnow + sched))
+        return 0
+    fi
     echo $((pnow + $(current_interval)))
 }
 
 # ---------------------------------------------------------------------------
 # 拉一张整图并全刷。返回 0 = 成功，1 = 这一轮没拿到图。
-# 注意整图里时钟那块是留白的，调用方刷完必须紧跟一次 stamp_clock，
-# 否则屏幕右上角会空一块。
+# 整图右上角那块（电量，以前还有时钟）在图里是**留白**的 —— 补它这一下归主循环干：
+# 每轮醒来都会跑 stamp_clock / stamp_battery，刷过整图的那一轮带 force。
+# 这里不要自己贴，否则同一小块会被连贴两遍。
 refresh() {
     [ "$WIFI_SLEEP" = "1" ] && wifi_on
 
@@ -368,7 +449,7 @@ refresh() {
     fi
 
     # 主地址失败就退到备用地址。两个都失败才算这一轮失败。
-    # 顺序很重要：主地址是云端（电脑关机也能出图），备用是局域网。
+    # 顺序很重要：主地址在公网，电脑关机也能出图；备用地址默认留空（理由见 config.sh ①）。
     got=0
     for url in "$DASHBOARD_URL" "$DASHBOARD_FALLBACK_URL"; do
         [ -n "$url" ] || continue
@@ -387,6 +468,10 @@ refresh() {
         # 被清成白的，而缓存文件还在，于是"和上次一样"= 什么都不画 = 一直白着。
         # 要省白闪得拿屏幕的真实状态当依据，不是拿文件。
         mv "$TMP" "$IMG"
+        # 每拿到一张好图就另存一份进设备存储。/tmp 重启就空了，而"点启动立刻贴一张"
+        # 靠的就是这个文件 —— 不同步的话重启后贴的可能是上个月的旧图，
+        # 屏幕上是一个月前的日期，比空白更误导人。
+        cp "$IMG" "$FALLBACK_IMAGE" 2>/dev/null
         consecutive_failures=0
         notice_shown=0
         if is_low_battery; then
@@ -395,7 +480,6 @@ refresh() {
         else
             show_image
             show_status_line
-            stamp_battery
         fi
         [ "$WIFI_SLEEP" = "1" ] && wifi_off
         return 0
@@ -453,17 +537,28 @@ secure_sleep() {
             wakeup_enable) echo "$duration"  >"$RTC" 2>/dev/null ;;   # 老内核：裸秒数
         esac
         t0=$(now_epoch)
+        # 官方 ABI：suspend 前先把 wakeup_count 写回去，等于向内核"认领"当前这批
+        # 唤醒事件。不写的话，事件还没排空就 `echo mem`，内核会立刻 abort ——
+        # 实测症状就是"人为唤醒之后 echo mem 每秒弹回"（#2 #3 都是 1s），
+        # 而第一次能睡 121 秒。dmesg 里那句 `otg udc vbus rising wakeup`
+        # 说明 USB VBUS 本身就是唤醒源，插着线时更容易撞上。
+        wc=$(cat /sys/power/wakeup_count 2>/dev/null)
+        [ -n "$wc" ] && echo "$wc" >/sys/power/wakeup_count 2>/dev/null
         echo mem >/sys/power/state
         slept=$(( $(now_epoch) - t0 ))
         # 第一次必须留下证据：计划睡多久 vs 实际睡了多久。
         # slept ≈ duration = 真睡进去了；slept ≈ 0 = `echo mem` 压根没生效
         # （多半是 RTC 没被登记成唤醒源），那跟没改之前一样整夜醒着。
-        if [ -z "$first_sleep_logged" ]; then
-            first_sleep_logged=1
-            # 把 next_image_at 和睡前时刻一起打出来：实测出现过"计划 60s"，
-            # 而按配置应该封顶在 600s。光看 duration 分不清是算错了还是被上下限
-            # 夹的，这两个值一放进来就能立刻看出来是哪一头。
-            log "首次休眠实测：计划 ${duration}s，实际睡了 ${slept}s（$RTC_KIND @ $RTC）· 睡前 $t0 · 下次出图 $next_image_at"
+        # 为什么睡不长 —— 别猜，连测三次再下结论。
+        # 第一次紧跟在整图刷新之后，EPD 还在忙，`echo mem` 本来就容易 1~2 秒弹回，
+        # 拿它当证据会误判（就误判过一次）。所以头三次都记，第四次起只在
+        # "真睡够八成时间"时再记一行，不会把日志刷爆。
+        if [ "${sleep_logged:-0}" -lt 3 ]; then
+            sleep_logged=$(( ${sleep_logged:-0} + 1 ))
+            log "休眠实测 #$sleep_logged：计划 ${duration}s，实际睡了 ${slept}s（$RTC_KIND @ $RTC）· 下次出图 $next_image_at"
+        elif [ -z "$sleep_proof_logged" ] && [ "$slept" -ge $((duration * 8 / 10)) ]; then
+            sleep_proof_logged=1
+            log "休眠确认：计划 ${duration}s，实际睡了 ${slept}s —— 真睡进去了"
         fi
         # 比预定时间早一大截就回来了 = 叫醒我们的不是闹钟，是有人碰屏幕或按了电源。
         # 原生界面在恢复过程中会把我们画的整图擦掉，而循环每分钟只贴那一小块钟，
@@ -473,6 +568,27 @@ secure_sleep() {
         # 重贴整图，屏幕会被刷坏。
         if [ "$slept" -ge 5 ] && [ "$slept" -lt "$((duration - 10))" ]; then
             woken_early=1
+        fi
+        # 连着几次 `echo mem` 一秒就弹回 = 有东西压着不让睡。这时候继续重试就是
+        # **纯空转**：CPU 满载、一度电也省不下来，比老实 sleep 还糟 ——
+        # 而这正是现在实测在发生的事（计划 600s，实际睡 1s，然后立刻再试）。
+        # 所以连蹦三次就改用普通 sleep 把剩下的时间熬掉，并且只喊一次。
+        if [ "$slept" -lt 5 ]; then
+            suspend_bounces=$((suspend_bounces + 1))
+        else
+            suspend_bounces=0
+        fi
+        if [ "$suspend_bounces" -ge 3 ]; then
+            if [ "$bounce_warned" = "0" ]; then
+                bounce_warned=1
+                log "!! 连续 $suspend_bounces 次 suspend 立刻弹回 → 有东西拦着，改用普通 sleep 熬时间（看 system_probe.txt 里 dmesg 那段）"
+            fi
+            elapsed=$slept
+            while [ "$elapsed" -lt "$duration" ]; do
+                [ -f "$STOP_FLAG" ] && return 0
+                sleep 10
+                elapsed=$((elapsed + 10))
+            done
         fi
     else
         # 退化为普通 sleep：设备不会真正休眠，耗电大，但一定能醒
@@ -493,6 +609,11 @@ cleanup() {
     log "退出：恢复系统状态（原因：${1:-未记录}）"
     rm -f "$RUN_FLAG" "$PID_FILE" "$STOP_FLAG" "$TMP" "$HDR"
     eips -c >/dev/null 2>&1
+    # WiFi 一定要还回去。WIFI_SLEEP=1 时刷完图会把射频关掉，而这条退出路径
+    # 以前**不打开它** —— 后果是"退出信息屏之后 Kindle 搜不到任何 WiFi"，
+    # 只能重启。2026-09-22 加 WIFI_SLEEP=1 时漏了这一条，别再漏第二次。
+    # 放在最前面：下面任何一步失败都不该把用户留在"射频关着"的状态里。
+    wifi_on
     lipc-set-prop com.lab126.powerd preventScreenSaver 0 >/dev/null 2>&1
     if [ "$STOP_FRAMEWORK" = "1" ]; then
         # 反过来还回去。framework 起来后一般会把 pillow / statusbar 自己带起来，
@@ -514,7 +635,7 @@ init() {
     log "=== 启动 AI 信息屏 ==="
     log "URL: $DASHBOARD_URL"
     [ -n "$DASHBOARD_FALLBACK_URL" ] && log "备用: $DASHBOARD_FALLBACK_URL"
-    log "整图：优先听云端时刻表（X-Next-Image），拿不到才按 白天 ${UPDATE_INTERVAL}s / 夜间 ${NIGHT_INTERVAL}s 轮询"
+    log "整图：时刻表在本机（REFRESH_AT=${REFRESH_AT:-未设置}），算不出来才退回 白天 ${UPDATE_INTERVAL}s / 夜间 ${NIGHT_INTERVAL}s"
     # 这一行是拿来当场核表的：屏幕上的时间就是这个 date 的输出，
     # 和你对着手表看到的时刻不一样 → 就是 config.sh 的 TIMEZONE 错了，别改别的。
     log "设备时间 $(date '+%Y-%m-%d %H:%M:%S')（TZ=${TZ:-未设置}，epoch $(date +%s)）"
@@ -570,6 +691,13 @@ init() {
         ls /sys/power 2>/dev/null
         echo "state        = $(cat /sys/power/state 2>/dev/null)"
         echo "wakeup_count = $(cat /sys/power/wakeup_count 2>/dev/null)"
+        # 为什么 `echo mem` 一秒就被顶回来 —— 别猜，让内核自己说。
+        # suspend 失败时 PM 层会写下是谁拦的（某个驱动 wakelock、某个唤醒源、
+        # 或者 powerd 自己压着 deferSuspend）。
+        echo "-- powerd 有没有压着不休眠 --"
+        echo "deferSuspend = $(lipc-get-prop com.lab126.powerd deferSuspend 2>/dev/null)"
+        echo "-- 内核里 suspend / resume / wakeup 相关最后 25 行 --"
+        dmesg 2>/dev/null | grep -iE "suspend|resume|wakeup|wake.*alarm|PM:|earlysuspend" | tail -n 25
         echo "-- powerd 属性 --"
         echo "sleepDuration      = $(lipc-get-prop com.lab126.powerd sleepDuration 2>/dev/null)"
         echo "powerMgrState      = $(lipc-get-prop com.lab126.powerd powerMgrState 2>/dev/null)"
@@ -619,6 +747,26 @@ init() {
     echo powersave >/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
     # 阻止系统屏保把我们的画面盖掉
     lipc-set-prop com.lab126.powerd preventScreenSaver 1 >/dev/null 2>&1
+
+    # 点下「启动信息屏」要**立刻看到画面**，不能等网络。
+    #
+    # 为什么以前会"卡在 PID / setsid 那页"：scriptlet 是把 stdout 当成一个文字页
+    # 显示在屏幕上的，而第一次联网刷新可能要十几秒、失败时更久（服务端没起、WiFi
+    # 没连上）。刷新没成功就没有任何东西可画，于是那页文字一直留着，
+    # 看起来像"点了没反应"。
+    #
+    # 所以这里先把**手上已有的一张**贴上去 —— /tmp 的缓存图优先，
+    # 没有就用设备里的 fallback.png —— 然后主循环再照常联网更新。
+    # 这一步失败也无所谓：主循环会重试，而且下面那行日志会说明当时到底有没有图。
+    if [ -f "$IMG" ]; then
+        eips -f -g "$IMG" >/dev/null 2>&1
+        log "启动即贴屏：用上次那张缓存图（联网更新随后进行）"
+    elif [ -f "$FALLBACK_IMAGE" ]; then
+        cp "$FALLBACK_IMAGE" "$IMG" 2>/dev/null && eips -f -g "$IMG" >/dev/null 2>&1
+        log "启动即贴屏：无缓存，用 fallback.png 顶上"
+    else
+        log "启动即贴屏：设备上没有可贴的图，只能等首轮联网结果"
+    fi
 }
 
 main_loop() {
@@ -633,8 +781,21 @@ main_loop() {
         # 第一次进来（还没图）或者到点，就拉一张整图
         if [ ! -f "$IMG" ] || [ "$now" -ge "$next_image_at" ]; then
             if refresh; then
-                # 下次什么时候再来，问云端（它才知道时刻表），问不到才自己按间隔算
+                # 下一次几点来才有新图：先看服务器有没有塞 X-Next-Image（只有我们自己
+                # 跑的 HTTP 服务会塞），没有就按 config.sh 的 REFRESH_AT 自己算
                 next_image_at=$(plan_next_image)
+                case "$next_image_at" in
+                    ''|*[!0-9]*) next_image_at=0 ;;
+                esac
+                if [ "$next_image_at" -le "$now" ]; then
+                    # **算不出未来时刻就兜底，而且必须出声。**
+                    # 留着空串或过去时刻，下面那句 `[ now -ge next_image_at ]`
+                    # 要么报错返回假（永远不刷新）、要么每轮都刷新（刷屏），
+                    # 两种都是静默故障 —— 实际栽过一次：79 分钟屏幕没动过，
+                    # 日志里只有"已全屏刷新（第 0 次）"孤零零一行。
+                    next_image_at=$(( $(now_epoch) + 600 ))
+                    log "!! 算不出下次出图时刻，先按 600s 兜底（查 plan_next_image）"
+                fi
                 redrew=1
             else
                 # 失败别等一整个周期，10 分钟后再试一次
@@ -652,17 +813,56 @@ main_loop() {
         # 这里原来还挂着"双击屏幕退出"，已撤掉。碰屏幕是使用这块屏时最常见的动作，
         # 拿它当退出键等于随机退出 —— 用户反馈的"只有重启后第一次能正常打开"
         # 就是这么来的。退出只走「停止信息屏」、.stop 文件、长按电源三条路。
-        if [ "$woken_early" = "1" ] && [ "$redrew" = "0" ] && [ -f "$IMG" ] \
-           && [ "$notice_shown" != "1" ]; then
-            eips -g "$IMG" >/dev/null 2>&1
-            log "检测到被人为唤醒，已重贴整图"
+        # 人为唤醒：数次数当出口，并顺手把被原生界面擦掉的画面贴回去。
+        #
+        # 为什么靠"提前醒"而不是读触摸屏拿坐标：框架停掉之后没人告诉我们点了
+        # 哪儿，而且内核的唤醒源清单里压根没有触摸屏（见 system_probe.txt，
+        # 只有 ehci/usb/rtc/hall）。所以唯一可靠的信号就是"这次不是闹钟叫醒的"。
+        # 代价是**分不清位置** —— 屏幕上任何一下、甚至按电源键都算一下。
+        # 正因如此把上版的"两下"提到"三下、且每两下间隔不超过 EXIT_TAP_GAP 秒"：
+        # 两下会被误触干掉（见提交 2357393），三下快速连点只能是故意的。
+        #
+        # 每一下都写日志：现在还不知道触摸到底能不能叫醒这台机器，
+        # 这些行就是证据 —— 一次都没有 = 触摸不唤醒，得改用电源键那一套。
+        if [ "$woken_early" = "1" ]; then
+            # 带默认值取：万一设备上还是旧版 config.sh、没有这两个键，
+            # `[ x -ge "" ]` 会报错返回假 —— 退出功能就**静默失效**了。
+            need=${EXIT_TAPS:-3}
+            gap_max=${EXIT_TAP_GAP:-8}
+            tap_at=$(now_epoch)
+            gap=$((tap_at - last_tap_at))
+            if [ "$taps" -gt 0 ] && [ "$gap" -le "$gap_max" ]; then
+                taps=$((taps + 1))
+            else
+                taps=1
+                gap=0
+            fi
+            last_tap_at=$tap_at
+            log "人为唤醒：第 $taps/$need 下（距上次 ${gap}s）"
+            if [ "$taps" -ge "$need" ]; then
+                taps=0
+                log "连够 $need 下 → 退出并回到桌面"
+                cleanup "连点 ${need} 下（用户主动退出）"
+            fi
+            if [ "$redrew" = "0" ] && [ -f "$IMG" ] && [ "$notice_shown" != "1" ]; then
+                eips -g "$IMG" >/dev/null 2>&1
+                redrew=1            # 告诉下面：整屏刚重画过，右上角那块又是空的了
+                log "已重贴整图"
+            fi
         fi
         woken_early=0
 
-        # 整图刚刷过、或者只是过了一分钟 —— 都要重新贴时钟：
-        # 前者因为整图里那块是留白的，后者因为时间变了。
+        # 整图刚刷过、或者只是醒了一次 —— 都要重新贴这两小块：
+        # 前者因为整图里右上角是留白的，后者因为画面可能被原生界面擦过。
+        # 电量尤其值得每次醒来看一眼：走 GitHub 之后整图一天只有四次，
+        # 不补这一步，屏幕上的电量角标就跟着一天只动四次。
+        # 醒的次数由 STOP_CHECK_MAX_SLEEP 封顶（默认 10 分钟），而且这两下都是
+        # du 局部刷新 —— 不额外唤醒，只是顺手，档位没变时 stamp_battery 自己跳过。
         # 低电量提示占着整屏时不贴，免得把它盖掉。
-        [ "$notice_shown" = "1" ] || stamp_clock
+        if [ "$notice_shown" != "1" ]; then
+            stamp_clock
+            if [ "$redrew" = "1" ]; then stamp_battery force; else stamp_battery; fi
+        fi
 
         sleep_to_next_tick
     done

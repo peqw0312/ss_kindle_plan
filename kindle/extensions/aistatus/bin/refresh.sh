@@ -6,7 +6,7 @@
 #  每一步都会打印结果。第一次配置时建议先单独跑这个，跑通了再启动主循环。
 #  在书库里点「测试刷新一次」（它就是一个 scriptlet），或者 SSH 执行 sh bin/refresh.sh
 #
-#  最后一步会按当前配置**把时钟也贴上**，所以你看到的画面和常驻模式是一样的。
+#  最后两步会按当前配置把**时钟**和**电量角标**贴上去，所以看到的画面和常驻模式一致。
 # =============================================================================
 
 DIR=/mnt/us/extensions/aistatus
@@ -25,6 +25,13 @@ CLOCK_Y=""
 # 这里再剥一道，防的是有人手改过。
 CLOCK_X=$(printf '%s' "$CLOCK_X" | tr -d '\r')
 CLOCK_Y=$(printf '%s' "$CLOCK_Y" | tr -d '\r')
+BATTERY_DIR="$DIR/battery"
+BATTERY_CONF="$BATTERY_DIR/battery.conf"
+BATTERY_X=""
+BATTERY_Y=""
+[ -f "$BATTERY_CONF" ] && . "$BATTERY_CONF"
+BATTERY_X=$(printf '%s' "$BATTERY_X" | tr -d '\r')
+BATTERY_Y=$(printf '%s' "$BATTERY_Y" | tr -d '\r')
 
 echo "=== AI 信息屏 · 单次刷新诊断 ==="
 echo "时间      : $(date)"
@@ -47,7 +54,7 @@ esac
 
 # --- 1. WiFi ---
 echo ""
-echo "[1/6] 检查 WiFi…"
+echo "[1/7] 检查 WiFi…"
 lipc-set-prop com.lab126.cmd wirelessEnable 1 >/dev/null 2>&1
 state=$(lipc-get-prop com.lab126.wifid cmState 2>/dev/null)
 echo "      wifid 状态: ${state:-读取失败}"
@@ -75,7 +82,7 @@ fi
 
 # --- 2. 下载 ---
 echo ""
-echo "[2/6] 下载图片…"
+echo "[2/7] 下载图片…"
 rm -f "$TMP" "$HDR"
 start=$(date +%s)
 if command -v curl >/dev/null 2>&1; then
@@ -100,7 +107,7 @@ fi
 
 # --- 3. 校验 ---
 echo ""
-echo "[3/6] 校验文件…"
+echo "[3/7] 校验文件…"
 size=$(wc -c <"$TMP" 2>/dev/null || echo 0)
 magic=$(head -c 4 "$TMP" 2>/dev/null | od -An -tx1 | tr -d ' \n')
 echo "      大小 $size 字节，文件头 $magic"
@@ -118,7 +125,7 @@ fi
 
 # --- 4. 对表 ---
 echo ""
-echo "[4/6] 设备时间对表…"
+echo "[4/7] 设备时间对表…"
 srv=$(grep -i '^x-epoch:' "$HDR" 2>/dev/null | tail -n 1 | tr -cd '0-9')
 dev=$(date +%s 2>/dev/null)
 if [ -n "$srv" ] && [ -n "$dev" ]; then
@@ -137,7 +144,7 @@ fi
 
 # --- 5. 显示 ---
 echo ""
-echo "[5/6] 写入屏幕…"
+echo "[5/7] 写入屏幕…"
 cp "$TMP" "$IMG"
 eips -c >/dev/null 2>&1
 eips -f -g "$IMG" >/dev/null 2>&1
@@ -149,7 +156,7 @@ fi
 
 # --- 6. 时钟 ---
 echo ""
-echo "[6/6] 本机时钟…"
+echo "[6/7] 本机时钟…"
 if [ "$CLOCK_MODE" != "local" ]; then
     echo "      CLOCK_MODE=$CLOCK_MODE，跳过（时间由出图时画死）"
 else
@@ -165,6 +172,34 @@ else
         echo "      eips 返回码 $?${cout:+，输出：$cout}"
         echo "      请看一眼：时钟应该在日历条**右上角**。"
         echo "      如果在屏幕左上角 → 这个固件不支持 -x/-y，跑「时钟贴图自检」看详情。"
+    fi
+fi
+
+# --- 7. 电量 ---
+echo ""
+echo "[7/7] 本机电量角标…"
+if [ "$BATTERY_MODE" != "local" ]; then
+    echo "      BATTERY_MODE=$BATTERY_MODE，跳过（电量由出图时画死）"
+elif [ ! -f "$BATTERY_CONF" ]; then
+    echo "      !! 缺 $BATTERY_CONF —— 右上角那块会一直是空白。"
+    echo "         电脑上跑 python dashboard/tools/make_battery_assets.py，"
+    echo "         然后把 battery/ 整个目录拷到 extensions/aistatus/ 下。"
+else
+    bat=$(gasgauge-info -c 2>/dev/null)
+    if [ -z "$bat" ]; then
+        echo "      gasgauge-info 没读到电量，跳过"
+    else
+        lvl=$(( (bat + 5) / 10 * 10 ))
+        [ "$lvl" -gt 100 ] && lvl=100
+        sprite="$BATTERY_DIR/$(printf '%03d' "$lvl").png"
+        if [ ! -f "$sprite" ]; then
+            echo "      !! 缺 $sprite —— battery/ 没拷全，整目录重拷一次"
+        else
+            echo "      电量 ${bat}% → 贴 $(basename "$sprite") 到 ($BATTERY_X,$BATTERY_Y)，波形 ${BATTERY_WAVE:-du}"
+            bout=$(eips -g "$sprite" -w "${BATTERY_WAVE:-du}" -x "$BATTERY_X" -y "$BATTERY_Y" 2>&1)
+            echo "      eips 返回码 $?${bout:+，输出：$bout}"
+            echo "      请看一眼：右上角那块空白应该已经变成电量角标了。"
+        fi
     fi
 fi
 

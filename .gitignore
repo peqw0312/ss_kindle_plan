@@ -24,3 +24,13 @@ dashboard/config.local.yaml
 # 项目自己的 Python 环境（几百万个文件，绝不能进仓库）
 .venv/
 venv/
+
+# 时钟精灵图：1441 个文件、约 700KB，全是生成物。
+# 需要时在电脑上跑一次就重做出来：
+#     python dashboard/tools/make_clock_assets.py
+# 而且现在 clock.mode=off 根本不贴钟，这批图压根用不上。
+# 真要拷给 Kindle 也还是从本地目录拷 —— 所以留在磁盘上，但不进版本库。
+kindle/extensions/aistatus/clock/
+
+# .workbuddy 下散落的截图（之前 live.png 就是这么混进版本库的）
+.workbuddy/*.png

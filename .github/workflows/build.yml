@@ -1,0 +1,106 @@
+name: 生成信息屏
+
+# 这台电脑不是服务器 —— 出图这件事整个交给 GitHub。
+# 本地只负责改代码和自检，push 上去之后由 Actions 按点出图，
+# 图片提交回本仓库的 docs/，Kindle 直接从 raw.githubusercontent.com 拉。
+#
+# 为什么是四个精确时刻，不是"每 30 分钟跑一次"（旧那版的做法）：
+# 时间已经交给 Kindle 本机画（现在是 clock.mode=off，连时间都不要了），
+# 图不需要为了"看起来新鲜"而反复重算。真正需要新数据的时刻只有四个：
+#   00:05  翻日期 + 农历节气
+#   05:10  美股收盘
+#   12:00  午间
+#   15:05  A 股收盘
+# 一天四次，额度用不到零头。
+
+on:
+  schedule:
+    # GitHub 的 cron 是 UTC。北京时间 = UTC+8，所以下面这四行对应
+    # 北京 00:05 / 05:10 / 12:00 / 15:05。改的时候别只改一边。
+    - cron: "5 16 * * *"     # 北京 00:05（前一天的 UTC）
+    - cron: "10 21 * * *"    # 北京 05:10（前一天的 UTC）
+    - cron: "0 4 * * *"      # 北京 12:00
+    - cron: "5 7 * * *"      # 北京 15:05
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:          # 网页上可以手动点一次，改完版式立刻看效果
+
+# 同一时间只跑一个：上一轮还没提交完，下一轮不要插进来
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+permissions:
+  contents: write             # 要把生成的图提交回来
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: dashboard/requirements.txt
+
+      # 字体必须在装，否则中文全是方框。思源黑体来自 fonts-noto-cjk，
+      # 同一个包里还带 NotoSerifCJK —— 版式里那个宋体大数字靠的就是它。
+      # 万一 runner 上没装到宋体，fonts.py 会自动退回粗体黑，
+      # 版面几何不变（数字宽度差 <3%），只是书卷气差一点，不会出坏图。
+      - name: 装中文字体
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-cjk
+          fc-cache -f > /dev/null 2>&1
+          echo "--- 实际可用的中文字体 ---"
+          fc-list :lang=zh family | sort -u | head -n 12
+
+      - name: 装依赖（只有 Pillow / PyYAML / requests）
+        run: pip install -r dashboard/requirements.txt
+
+      - name: 生成信息屏图片
+        env:
+          TZ: Asia/Shanghai
+        run: python dashboard/generate.py --config dashboard/config.yaml
+
+      # 失败就别提交 —— 让仓库里留着一张上次的正常图。
+      # 屏幕上显示"几小时前的图"远好过显示一张半成品或者 404。
+      - name: 提交并推送
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/dashboard.png
+          if git diff --cached --quiet; then
+            echo "图片没有变化，跳过提交"
+          else
+            git commit -m "chore: 更新信息屏 $(TZ=Asia/Shanghai date '+%m-%d %H:%M')"
+            # 并发或手动跑过一轮时远端可能已经有新提交，先 rebase 再推
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+            git push
+          fi
+
+      - name: 结果摘要
+        if: always()
+        run: |
+          {
+            echo "## 信息屏生成结果"
+            echo ""
+            if [ -f docs/dashboard.png ]; then
+              echo "- 图片：$(stat -c%s docs/dashboard.png) 字节"
+            else
+              echo "- ★ 没有生成出图片"
+            fi
+            if [ -f docs/debug.json ]; then
+              echo ""
+              echo '```json'
+              python -c "import json;d=json.load(open('docs/debug.json',encoding='utf-8'));print(json.dumps(d.get('counts',{}),ensure_ascii=False,indent=2))" || true
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

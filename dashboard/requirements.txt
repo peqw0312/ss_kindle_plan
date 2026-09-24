@@ -1,4 +1,4 @@
-# 云端出图服务（dashboard/app.py）的依赖。
+# GitHub Actions 出图时的依赖（.github/workflows/build.yml 装的就是这一份）。
 # 刻意保持极简：整个项目只需要这三个库。
 Pillow>=10.0
 PyYAML>=6.0

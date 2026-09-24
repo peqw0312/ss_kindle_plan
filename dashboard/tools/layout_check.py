@@ -397,14 +397,18 @@ def main() -> int:
     print("=" * 66)
 
     print("\n【纵向预算】")
-    poster = str(cfg.get("style.layout", "bands") or "bands").lower() == "poster"
+    # poster（帖）和 c1（带）都是"直接渲染、量实际矩形"的量法；
+    # 只有 bands 才需要按条带基准高去预算。c1 刚加进来时这里漏了，
+    # 于是它拿 bands 的数字报了个 ✅ —— 假通过，比不查更糟。
+    layout = str(cfg.get("style.layout", "bands") or "bands").lower()
+    direct_measure = layout in ("poster", "c1")
     worst = 0
     worst_slack = 10 ** 9
     for tag, when, weather in SCENARIOS:
         cal = calendar_info(when)
         data = build_data(cfg, when, weather)
         renderer = Renderer(cfg, data)
-        if poster:
+        if direct_measure:
             # 帖版没有"条带基准高"这个概念：直接渲染，量每块实际占的矩形和底边余量
             image = renderer.render()
             image.save(out_dir / f"{tag}.png")
@@ -414,7 +418,8 @@ def main() -> int:
             for key, (_x0, y0, _x1, y1) in renderer.block_boxes.items():
                 print(f"     {renderer.BLOCK_LABELS.get(key, key):<6} "
                       f"y {y0:>4}..{y1:>4}   高 {y1 - y0:>4}px")
-            print(f"     底边余量 {renderer.slack}px（帖版不摊富余，回收=底部留白）")
+            print(f"     总余量 {renderer.slack}px（上下留白合计；居中版式看这个数，"
+                  f"底边那半截只是它的一半）")
             for note in renderer.notes:
                 print(f"     {WARN} {note}")
             continue
@@ -429,10 +434,10 @@ def main() -> int:
         for note in renderer.notes:
             print(f"     {WARN} {note}")
 
-    if poster:
+    if direct_measure:
         print("\n【横向预算】")
-        print("     帖版所有长字符串都走 clip_text 兜底（干支节气行 / 预警 / 预报描述 /"
-              " 速览标题），跳过条带版的两栏横向检查。")
+        print("     居中/分带版式所有长字符串都走 clip_text 兜底（干支节气行 / 预警 /"
+              " 预报描述 / 速览标题），跳过条带版的两栏横向检查。")
     else:
         print("\n【横向预算 · 日历条第一行】")
         for row in check_width_budget(cfg, SCENARIOS[0][1]):
@@ -452,8 +457,8 @@ def main() -> int:
 
     print("\n【电量精灵图 · 与版面几何同步】")
     battery_ok = True
-    if not poster:
-        print("     非 poster 版式，右上角没有电量区，跳过")
+    if not direct_measure:
+        print("     bands 版式右上角没有电量区，跳过")
     else:
         region = Renderer(cfg, build_data(cfg, SCENARIOS[0][1], WEATHER)).battery_region()
         conf = ROOT / "kindle" / "extensions" / "aistatus" / "battery" / "battery.conf"
@@ -478,9 +483,10 @@ def main() -> int:
                 print(f"     精灵图坐标与 geometry 一致：{region}（指纹 {got.get('BATTERY_TAG')}）")
 
     print("\n【结论】")
-    slack = worst_slack if poster else cfg.size[1] - worst
+    slack = worst_slack if direct_measure else cfg.size[1] - worst
     if slack >= 40:
-        tail = ("回收的空间留在底部当留白" if poster else "均摊成内边距后版面很从容")
+        tail = ("上下留白合计，居中版式从两边一起扣" if direct_measure
+                else "均摊成内边距后版面很从容")
         line("余量", OK, f"最紧的一屏还剩 {slack}px，{tail}")
     elif slack >= 0:
         line("余量", WARN, f"最紧的一屏只剩 {slack}px：不会越界，但换字体会很紧，"
@@ -489,7 +495,7 @@ def main() -> int:
         line("余量", BAD, f"最紧的一屏已经超出 {-slack}px，必须减字号或关一个区块")
     line("时钟", OK if clock_ok else BAD,
          "精灵图与几何同一套" if clock_ok else "精灵图与几何对不上，真机上会贴偏")
-    if poster:
+    if direct_measure:
         line("电量", OK if battery_ok else BAD,
              "精灵图坐标与版面几何一致" if battery_ok
              else "battery.conf 与版面几何对不上，真机上会贴偏")

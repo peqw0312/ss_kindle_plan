@@ -158,24 +158,58 @@ Kindle 拉图显示。
 - 设备上 **`sshd` 在跑**（`initctl list` 里 start/running）。WiFi IP 由探针打印。
   **以后调试优先走 SSH**：USB 插拔本身会把信息屏进程硬杀掉（不走 cleanup，
   日志里连"退出"都没有），拿不到现场。
-- 待查：**心跳算出来 60s，配置应该封顶 600s**。`首次休眠实测` 那行已经带上
-  `睡前时刻` 和 `next_image_at`，下次一看就知道是算错还是被夹。
+- **任何"关掉设备硬件"的开关，都必须在每一条退出路径上还原。**
+  2026-09-22 加 `WIFI_SLEEP=1`（刷完图关射频）时只改了刷新流程，没改 `cleanup()`
+  和 `stop.sh` —— 结果进程一退出，射频就永久停在 off，用户看到的是
+  **"Kindle 搜不到任何 WiFi"**，只能重启。射频是软开关，但用户没法从 U 盘模式里
+  执行命令，所以只能靠重启或设置里手动开关一次。
+  现在 `cleanup()` 第一句就是 `wifi_on`（放在最前面，后面任何一步失败都不该
+  把设备留在射频关闭状态），`stop.sh` 里也补了一次 —— 因为**主进程可能已被硬杀，
+  stop.sh 是唯一还会执行的路径**。
+  推广到所有硬件开关：射频、屏保、CPU governor、框架任务，**加一个关闭点就要
+  检查所有退出点**。
+- **心跳 bug 已修**（就是上面那条"待查"的答案）：`current_interval()` 里的
+  `$((10#$hour))` busybox 的 ash 不认 → 函数输出空 → `next_image_at` 变空串 →
+  主循环 `[ now -ge "" ]` **报错返回假** → 永远判定"还没到点"，实测屏幕
+  **79 分钟一次都没刷新**。现在改成剥前导零（`08`/`09` 会踩八进制，不能写
+  `$((hour))`），并且算不出时刻时兜底成 600s + **在日志里喊出来**。
+  教训：空值参与算术/比较是**静默失败**，宁可兜底也不要让它静默。
+- **`WIFI_SLEEP` 保持 0，别再改回 1。** 曾经以为"射频常开是 `echo mem` 睡不进去的
+  原因"，实测把结论推翻了：`=1` → 第一次睡 121s、随后 1s/1s 弹回空转；
+  `=0` → 181s / 178s / 175s 精准。真正起作用的是 wakealarm 和写
+  `/sys/power/wakeup_count` 那两处。而关射频带来一个新故障：框架停掉后 WiFi 一旦
+  掉线就再也连不上（连续 14 轮「WiFi 连接超时」，屏幕靠 `fallback.png` 撑）。
+  想省电去查唤醒源，不要拿射频开刀。
 
 ## 托管与调度
 
-- `dashboard/serve.py`：标准库静态服务（本机备用方案）。**必须摘掉
-  `If-Modified-Since` / `If-None-Match`**，响应头压 `Cache-Control: no-store`。
-- `dashboard/tools/install_task.py`：注册 Windows 计划任务 `KindleAIScreen`。
-  **它读 `config.yaml` 的 `cloud.refresh_at`，每个时刻各注册一个每日触发器**
-  （不是"每 60 分钟一次"那种固定间隔）。`--at 07:30,12:00`（**逗号分隔，不是可重复参数**）
-  可临时覆盖；`refresh_at` 留空时用 `--minutes` 指定固定间隔。
-  用 Python 驱动 PowerShell（`.ps1` 在中文路径下会按 GBK 读而乱码）。
-  `--status/--run/--remove`。
-  **改完 `refresh_at` 要重跑一次它**，任务只在注册那一刻读配置。
-  云端为主之后这条只服务备用方案，但留着没坏处（还能保持 `docs/` 有新图当兜底）。
-- 本机局域网 IP **192.168.31.158**（以太网），网关 **192.168.31.1**。
-- 走本机方案时**电脑必须不休眠**，否则图不更新 —— 而 Kindle 那边不会报错，
-  只是显示旧图。
+**2026-09-24 起只有一条路：GitHub。** 电脑不再承担任何服务角色 ——
+`dashboard/app.py`（自建出图服务）、`dashboard/serve.py`（局域网静态发图）、
+`dashboard/tools/install_task.py`（Windows 计划任务 `KindleAIScreen`，
+就是每天弹四次黑窗口那个）都已退役，理由见下面第一条。
+
+- **为什么放弃自建**：这三个东西都要求"电脑开着且不睡"。用户明确否掉了
+  （"我的个人电脑不是服务器"）。而且计划任务只往本地写文件、不上传，
+  弹窗纯属白跑。当初列的"GitHub 不行"的三条理由，实测两条是错的：
+  本机到 `raw`/`pages`/`api`/`git ls-remote` 四个端点 1~1.4 秒可达，不需要代理。
+- **现在的链路**：`.github/workflows/build.yml` 按四个 UTC 时刻跑 `generate.py`
+  → 把 `docs/dashboard.png` 提交回本仓库 → Kindle 拉
+  `raw.githubusercontent.com/<owner>/<repo>/main/docs/dashboard.png`。
+  **仓库必须公开**（Kindle 没法带 token 认证，私有 Pages 是付费功能），
+  所以 `config.yaml` 里的经纬度只保留 2 位小数（≈1 公里），别改回去。
+- **时刻表搬到了设备上**：GitHub 的 raw 是静态文件，**发不了自定义头**，
+  所以原来那套"云端用 `X-Next-Image` 告诉 Kindle 几点再来"没了。
+  现在由 `config.sh` 的 `REFRESH_AT` + `REFRESH_LAG` 在本机算
+  （`seconds_to_next_slot()`，纯整数运算，不碰 `date -d`）。
+  ⚠️ **`REFRESH_AT` 和 `config.yaml` 的 `cloud.refresh_at` 是同一张表的两个副本，
+  改的时候必须一起改** —— 不一致不会报错，只会让 Kindle 在没有新图的时间点
+  白连一次 WiFi 拿回旧图。`REFRESH_LAG`（默认 600s）是给 Actions 跑完 +
+  raw 的约 5 分钟 CDN 缓存留的余量，卡在整点去拉必然拿到旧图。
+  `next_image_from_headers()` 那条分支留着不删：它没有副作用，
+  哪天再跑一个自建 HTTP 服务当备用出口就自动生效。
+- **Actions 跑在美国机房**，它抓不抓得动国内数据源（Open-Meteo / 腾讯行情）
+  是这条方案**唯一没验证过的风险**。本地测不出来，只能看第一次定时任务的日志。
+- 公开仓库满 60 天无活动会自动关掉 schedule —— 长期不用之后突然不更新，先查这里。
 
 ## 天气源（和风为主 + Open-Meteo 兜底）
 
@@ -241,13 +275,20 @@ Kindle 拉图显示。
 
 ### 「帖」版式（`style.layout: poster`，2026-09-22 起为线上版式）
 
-- 设计稿三方向里选中的「三 · 帖」，又按真机反馈迭代了一轮（字太小、下半页空）：
-  定稿 = 设计稿「丙 · 疏朗」+ 整组垂直居中，**速览不上屏**（`digest.enabled: false`）。
-  实现住在 `render.py` 的 `_poster_body` / `_render_poster`，字阶块距是配平过的整组
-  `P_FS_*` + `PG`，**不和条带版的 `FS_*` 共用一张表**。`style.preset` 对 poster 无效。
-- **整组内容在 [电量矩形下沿, 页脚上沿] 之间垂直居中；块距写死不随内容伸缩** ——
-  开关模块 / 有无预警只平移整组，不缩放，墙上的"地图"一天四次重画之间不跳。
-  余量不摊进内边距（条带版照旧均摊，两套规则各自写在代码里）。
+- 设计稿三方向里选中的「三 · 帖」，真机反馈迭代三轮后定稿 = 设计稿
+  **「巨 · 乙 双栏报头」**（huge.html）：左上角角标挂农历月 + 公历月周（52）；
+  左栏日期 420 + 农历日 104（「十二日」，农历文本按 `^(.*月)(.+)$` 拆月/日）；
+  右栏图标 + 温度 160 + 天气词 46 + 地名 32，两栏间一根竖发丝线；
+  报头以下回通栏（干支节气行左对齐、预警、预报 38 / 图标 112、指数 62）。
+  **速览不上屏**（`digest.enabled: false`）。实现住在 `render.py` 的
+  `_poster_body` / `_render_poster`，字阶块距是配平过的整组 `P_FS_*` + `PG`，
+  **不和条带版的 `FS_*` 共用一张表**。`style.preset` 对 poster 无效。
+  日历关掉时报头没有左栏可挂靠，天气退成居中单行（`_centered_weather`）。
+- **整组内容垂直居中；块距写死不随内容伸缩** —— 开关模块 / 有无预警只平移整组，
+  不缩放，墙上的"地图"一天四次重画之间不跳。余量不摊进内边距（条带版照旧均摊）。
+  ⚠️ 余量口径：居中版式看**总余量**（`self.slack` = 上下留白合计，越界条件 extra<0），
+  不是底边那半截 —— 曾经拿底边半截去比 40px 安全线，误报过一轮"只剩 29px"。
+  最坏情况（2 预警）总余量 50px，平时 154px。
   主体高度用 `_poster_body_height()` 在 8×8 草稿上空画一遍量取（同 clock_sprite
   的换画布手法），别改回解析式堆 px —— 堆出来和真画差过 20px。
 - 显示字走 `fonts.book_for` 的第三路 `font.display`（本机 Source Han Serif SC Heavy
@@ -259,7 +300,9 @@ Kindle 拉图显示。
 - 右上角 `POSTER_BATTERY = (814,40,1016,96)` 留给**电量精灵图**（样式 B：
   百分比大字 + 进度条；≤20% 档位自带灰字「请充电」）。电量只有设备自己知道，
   云端画不了 —— 和当初时钟同一条路：图上留白、Kindle 按档位贴图。矩形固定，
-  换电量样式不用改版面。链路三件套（2026-09-22 建好）：
+  换电量样式不用改版面。报头角标与这矩形**同一行起画**（`top = POSTER_BATTERY[1]`）：
+  角标和左栏只占左半页，结构上碰不到电量矩形；改报头后用 crop extrema
+  验一次这块仍是纯白。链路三件套（2026-09-22 建好）：
   · `tools/make_battery_assets.py` —— 11 张档位图（000/010/…/100）+ `battery.conf`
     （LF 换行、指纹跳过、像素级自检同 make_clock_assets）
   · Kindle `config.sh` 的 `BATTERY_MODE` / `BATTERY_WAVE`；`aistatus.sh` 的
@@ -269,9 +312,10 @@ Kindle 拉图显示。
   没拷精灵图之前右上角就是一块留白，无害。
 - `layout_check.py` 认 poster：纵向预算改成渲染后量 `block_boxes` + `slack`，
   条带版的两栏横向检查跳过（poster 所有长字符串走 `clip_text` 兜底）。
-  最坏情况（2 预警 / 4 预报 / 3 指数 / 农历干支节气全开）余量 48px，平时 102px。
+  最坏情况（2 预警 / 4 预报 / 3 指数 / 农历干支节气全开）余量 50px，平时 154px。
 - 设计稿与规格：`.workbuddy/_directions/index.html`（三方向）、
-  `poster2.html`（空间配平三案）、`poster3.html`（电量四案）；
+  `poster2.html`（空间配平三案）、`poster3.html`（电量四案）、
+  `bigtype.html`（字阶三案）、`huge.html`（巨大四案，现线上 = 其中乙）；
   `tools/design_directions.py` 重跑可得。
 
 ### 条带版（`style.layout: bands`，旧线上版式）
