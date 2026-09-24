@@ -15,15 +15,15 @@
 #      —— 它把 hosts 里所有 GitHub 域名都指到了 127.0.0.1，本机测出来的秒通
 #      是它替答的。Kindle 没有这个工具。
 #
+#    三条都指向**screen 分支**上的 dashboard.png —— 那是 Actions 每次覆盖的
+#    生成物分支，历史永远只有一个提交，不会越攒越大。主分支上没有这张图。
 #    顺序：Pages 放最前（它是真正的静态托管，不跳来跳去）；jsDelivr 实测会
-#    对新建仓库返回 301 跳回 raw（2026-09-24），等于又撞回那堵墙，所以往后放；
+#    对新仓库返回 301 跳回 raw（2026-09-24），等于又撞回那堵墙，所以往后放；
 #    raw 放最后当"哪天网络变了就能用"的兜底。
 #
 #    每次请求都会自动带一个一次性参数（`?t=秒数`）破缓存：jsDelivr 对分支引用
 #    最长缓存 12 小时，Pages 也有 10 分钟边缘缓存，不破除的话屏幕能停在半天前。
-#
-#    注意 raw 那条里的 `main` 必须是仓库的真实默认分支，不然 404。
-DASHBOARD_URLS="https://peqw0312.github.io/ss_kindle_plan/docs/dashboard.png https://cdn.jsdelivr.net/gh/peqw0312/ss_kindle_plan@main/docs/dashboard.png https://raw.githubusercontent.com/peqw0312/ss_kindle_plan/main/docs/dashboard.png"
+DASHBOARD_URLS="https://peqw0312.github.io/ss_kindle_plan/dashboard.png https://cdn.jsdelivr.net/gh/peqw0312/ss_kindle_plan@screen/dashboard.png https://raw.githubusercontent.com/peqw0312/ss_kindle_plan/screen/dashboard.png"
 
 # ② 整图刷新节奏 -----------------------------------------------------------
 #    现在是**每小时一次**。GitHub 的 raw 是静态文件，发不了自定义头，所以

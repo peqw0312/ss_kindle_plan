@@ -1,8 +1,9 @@
 name: 生成信息屏
 
 # 这台电脑不是服务器 —— 出图这件事整个交给 GitHub。
-# 本地只负责改代码和自检，push 上去之后由 Actions 按点出图，
-# 图片提交回本仓库的 docs/，Kindle 从 jsDelivr / Pages / raw 三个出口里挑能通的拉。
+# 本地只负责改代码和自检，push 上去之后 Actions 按点出图，
+# 图**覆盖**到一个专用分支 `screen`（主分支历史不涨），Kindle 从
+# Pages / jsDelivr / raw 三个出口里挑能通的拉，三个都指向 screen 分支那张。
 #
 # 为什么是每小时，不是"一天四次"（以前那版）：
 # 屏幕上那个大号气温、湿度、风力都是**画死在图里的像素**，不是设备自己算的 ——
@@ -68,21 +69,27 @@ jobs:
           TZ: Asia/Shanghai
         run: python dashboard/generate.py --config dashboard/config.yaml
 
-      # 失败就别提交 —— 让仓库里留着一张上次的正常图。
-      # 屏幕上显示"几小时前的图"远好过显示一张半成品或者 404。
-      - name: 提交并推送
+      # 生成物放一个**专用分支 screen**，每次覆盖 —— 主分支的历史不会因为出图而变长。
+      # 另一条路是"每月删一次历史"，但删完 GitHub 不一定立刻回收那些对象，
+      # 而且定期 force-push 重写历史本身也有踩空的风险；一个只装一张图的分支
+      # 没这两个问题，历史永远就一个提交。
+      #
+      # 生成失败就不会走到这一步 —— screen 上留着上一张正常图。
+      # 屏幕上显示"一小时前的图"远好过显示半成品或者 404。
+      - name: 发布到 screen 分支（Pages 从这里取）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          cd "$(mktemp -d)"
+          git init -q -b screen
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/dashboard.png
-          if git diff --cached --quiet; then
-            echo "图片没有变化，跳过提交"
-          else
-            git commit -m "chore: 更新信息屏 $(TZ=Asia/Shanghai date '+%m-%d %H:%M')"
-            # 并发或手动跑过一轮时远端可能已经有新提交，先 rebase 再推
-            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
-            git push
-          fi
+          cp "$GITHUB_WORKSPACE/docs/dashboard.png" dashboard.png
+          git add dashboard.png
+          git commit -q -m "信息屏 $(TZ=Asia/Shanghai date '+%m-%d %H:%M')"
+          git push -q --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" screen
+          echo "已覆盖 screen 分支上的 dashboard.png"
 
       - name: 结果摘要
         if: always()

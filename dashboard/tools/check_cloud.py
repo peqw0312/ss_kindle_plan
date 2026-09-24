@@ -60,18 +60,19 @@ def get(url: str, headers: dict | None = None):
         return 0, {}, f"{type(exc).__name__}: {exc}".encode("utf-8")
 
 
-def url_from_device_config() -> str:
-    """读 Kindle 那边 config.sh 的 DASHBOARD_URL —— 要验的就是它，别自己抄一遍。
+def urls_from_device_config() -> list[str]:
+    """读 Kindle 那边 config.sh 的 DASHBOARD_URLS —— 要验的就是它们，别自己抄一遍。
 
     抄一份写死在这里，早晚和设备上那份对不上，然后"自检全绿、屏幕不更新"。
     """
     conf = ROOT / "kindle" / "extensions" / "aistatus" / "config.sh"
     if not conf.is_file():
-        return ""
+        return []
     for line in conf.read_text(encoding="utf-8", errors="replace").splitlines():
-        if re.match(r"^\s*DASHBOARD_URL\s*=", line):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return ""
+        if re.match(r"^\s*DASHBOARD_URLS\s*=", line):
+            value = line.split("=", 1)[1].strip().strip('"').strip("'")
+            return value.split()
+    return []
 
 
 def _age_hours(last_modified: str) -> float | None:
@@ -86,9 +87,11 @@ def _age_hours(last_modified: str) -> float | None:
     return (datetime.now(timezone.utc) - when).total_seconds() / 3600
 
 
-# 从 raw 地址反推仓库和路径，再问 API"这个文件最后一次提交是几点"。
+# 从 raw 地址反推仓库、分支和路径，再问 API"这个文件最后一次提交是几点"。
 _RAW_RE = re.compile(
-    r"^(?:https?://)?raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(.+)$")
+    r"^(?:https?://)?raw\.githubusercontent\.com/([\w.-]+)/([\w.-]+)/([^/]+)/(.+)$")
+
+_API_HDR = {"Accept": "application/vnd.github+json", "User-Agent": "aistatus-check"}
 
 
 def _age_from_api(raw_url: str) -> float | None:
@@ -100,11 +103,18 @@ def _age_from_api(raw_url: str) -> float | None:
     if not m:
         say("   · 地址不是 GitHub raw，判断不了图新不旧")
         return None
-    owner, repo, ref, path = m.groups()
+    owner, repo = m.group(1), m.group(2)
+    path_ref, path = m.group(3), m.group(4)
+    # 先看这个 ref 存不存在。screen 分支是 Actions 建的，第一次跑之前它根本没有 ——
+    # 不单独查一下的话，"分支不存在"和"API 限流"会混成同一种看不懂的失败。
+    st_ref, _, _ = get(f"https://api.github.com/repos/{owner}/{repo}/branches/{quote(path_ref)}",
+                       _API_HDR)
+    if st_ref == 404:
+        say(f"  !! 分支 {path_ref} 不存在 —— Actions 还没成功跑过一次")
+        return None
     api = (f"https://api.github.com/repos/{owner}/{repo}/commits"
-           f"?sha={quote(ref)}&path={quote(path)}&per_page=1")
-    status, _, body = get(api, {"Accept": "application/vnd.github+json",
-                                "User-Agent": "aistatus-check"})
+           f"?sha={quote(path_ref)}&path={quote(path)}&per_page=1")
+    status, _, body = get(api, _API_HDR)
     if status != 200:
         say(f"   · 问 API 没成功（status={status}），跳过新旧判断"
             "（未登录限 60 次/小时，别连着刷）")
@@ -130,9 +140,17 @@ def check(url: str, cfg_size: tuple[int, int] | None) -> bool:
     say(f"GET {url}")
     say(f"  status          = {status}  {cost:.2f}s  {len(body) / 1024:.1f} KB")
     if status != 200:
-        say("  !! 没拿到图。最常见的三个原因：仓库还没 push、"
-            "分支名不是 URL 里那个、docs/dashboard.png 还没被 Actions 提交过")
-        say(f"  返回内容前 200 字节：{body[:200]!r}")
+        host = url.split("/")[2] if "//" in url else url
+        if status == 404:
+            say(f"  !! 404。{host} 上还没有这张图："
+                "screen 分支是 Actions **第一次成功跑完**才会出现的，"
+                "Pages 还要在仓库 Settings → Pages 里选 screen 分支 / (root)")
+        elif status == 0:
+            say("  !! 连接就没建立起来（被重置或超时）。"
+                "这个出口在当前网络下不可用，换下一条看")
+        else:
+            say(f"  !! 没拿到图，HTTP 状态 {status}")
+        say(f"  返回内容前 120 字节：{body[:120]!r}")
         return False
     if cost > 55:
         say(f"  !! 下载用了 {cost:.0f}s，Kindle 那边 60s 就超时了")
@@ -192,9 +210,9 @@ def check(url: str, cfg_size: tuple[int, int] | None) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="验一下 Kindle 会拉到的那个地址")
-    parser.add_argument("--url", default=None,
-                        help="要验的地址；不填就读 kindle/extensions/aistatus/config.sh 的 DASHBOARD_URL")
+    parser = argparse.ArgumentParser(description="验一下 Kindle 会拉到的那些地址")
+    parser.add_argument("--url", action="append", default=None,
+                        help="只验指定地址（可重复）；不填就读 config.sh 的 DASHBOARD_URLS 全试一遍")
     parser.add_argument("--out", default=str(ROOT / ".workbuddy" / "_cloud_check.txt"),
                         help="结果写到哪个文件")
     args = parser.parse_args()
@@ -208,13 +226,27 @@ def main() -> int:
     except Exception as exc:                                   # noqa: BLE001
         say(f"（读 config.yaml 失败，跳过尺寸比对：{exc}）")
 
-    url = args.url or url_from_device_config()
-    if not url:
-        say("!! 没有可验的地址：--url 没给，config.sh 的 DASHBOARD_URL 也是空的")
+    urls = args.url or urls_from_device_config()
+    if not urls:
+        say("!! 没有可验的地址：--url 没给，config.sh 的 DASHBOARD_URLS 也是空的")
         return 1
-    passed = check(url, cfg_size)
 
-    say("\n" + ("全部通过 ✓" if passed else "有项目没通过，见上面 !! 标记"))
+    say("⚠️ 本机如果装了 GitHub 加速工具（hosts 把 GitHub 域名指到 127.0.0.1），"
+        "这里测出来的\"通\"是它替答的，**不等于 Kindle 上通**。"
+        "Kindle 的真相只能看设备日志：点「测试刷新一次」再读 refresh.log。\n")
+
+    # 只要有一个出口能拿到合法的图，设备就能正常工作 —— 和它的试法一致。
+    results = []
+    for url in urls:
+        say("=" * 66)
+        results.append(check(url, cfg_size))
+    passed = any(results)
+
+    say("=" * 66)
+    say(f"出口 {len(urls)} 条：通 {sum(1 for r in results if r)} 条"
+        + ("  → 设备能拿到图 ✓" if passed else "  → 一条都不通，设备一定拿不到图"))
+    say("\n" + ("全部通过 ✓" if all(results) else
+                ("至少一条通（设备会用第一条通的）" if passed else "没有一条能用，见上面 !! 标记")))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

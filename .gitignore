@@ -34,3 +34,7 @@ kindle/extensions/aistatus/clock/
 
 # .workbuddy 下散落的截图（之前 live.png 就是这么混进版本库的）
 .workbuddy/*.png
+
+# 出图结果不再进主分支历史：Actions 每次把它**覆盖**到专用分支 screen，
+# 主分支这张只是本机预览（历史上那几张是改架构之前留下的）。
+docs/dashboard.png
