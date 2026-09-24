@@ -33,21 +33,47 @@ BATTERY_Y=""
 BATTERY_X=$(printf '%s' "$BATTERY_X" | tr -d '\r')
 BATTERY_Y=$(printf '%s' "$BATTERY_Y" | tr -d '\r')
 
+# 和主循环里那份是同一个对照表。两个脚本各留一份是有意的：设备上的脚本要能
+# 单独拷、单独跑，不该为了几行文本去 source 对方。
+rc_meaning() {
+    case "$1" in
+        0)  echo "成功" ;;
+        6)  echo "域名解析失败" ;;
+        7)  echo "连不上服务器" ;;
+        28) echo "超时" ;;
+        35) echo "TLS 握手失败" ;;
+        60) echo "证书不受信任" ;;
+        90) echo "下载回来是空文件" ;;
+        *)  echo "未知返回码" ;;
+    esac
+}
+
+# 输出必须落盘。这个脚本是从书库里点开的，stdout 没有任何地方能看到 ——
+# 它号称"排障首选"，但所有诊断其实都进了虚空，只能靠主循环那几行日志猜。
+# 现在自己再跑一遍自己，屏幕上照常打印，同时整份写进 refresh.log。
+LOG_FILE="$DIR/refresh.log"
+if [ -z "$REFRESH_LOGGED" ] && command -v tee >/dev/null 2>&1; then
+    REFRESH_LOGGED=1
+    export REFRESH_LOGGED
+    /bin/sh "$0" 2>&1 | tee "$LOG_FILE"
+    exit 0
+fi
+
 echo "=== AI 信息屏 · 单次刷新诊断 ==="
 echo "时间      : $(date)"
-echo "主地址    : $DASHBOARD_URL"
-[ -n "$DASHBOARD_FALLBACK_URL" ] && echo "备用地址  : $DASHBOARD_FALLBACK_URL"
+echo "出口地址（按顺序试）："
+for u in $DASHBOARD_URLS; do echo "   $u"; done
 
 # 空地址、或者还留着 <你的...> 这类占位符，都是没配好
-case "$DASHBOARD_URL" in
-    "")
-        echo ""
-        echo "!! config.sh 里的 DASHBOARD_URL 是空的，先填上图片地址"
-        exit 1
-        ;;
+if [ -z "$DASHBOARD_URLS" ]; then
+    echo ""
+    echo "!! config.sh 里的 DASHBOARD_URLS 是空的，先填上图片地址"
+    exit 1
+fi
+case "$DASHBOARD_URLS" in
     *example*|*"<"*)
         echo ""
-        echo "!! DASHBOARD_URL 看起来还是示例/占位地址，请先改 config.sh"
+        echo "!! DASHBOARD_URLS 看起来还是示例/占位地址，请先改 config.sh"
         exit 1
         ;;
 esac
@@ -80,28 +106,55 @@ else
     exit 1
 fi
 
-# --- 2. 下载 ---
+# --- 2. 下载：每个出口都试一遍，逐个记下结果 ---
+# 这一步同时是"网络出口探针"。这台机器所在的网络对 GitHub 的几个域名区别对待
+# （raw 的 IP 直接连不上，jsDelivr 和 Pages 通），而电脑上装的加速工具会把这件事
+# 掩盖掉 —— 所以只能在设备上测。一次跑完就知道该把哪个地址放最前面。
 echo ""
-echo "[2/7] 下载图片…"
-rm -f "$TMP" "$HDR"
-start=$(date +%s)
-if command -v curl >/dev/null 2>&1; then
-    echo "      使用 curl"
-    curl -L --silent --show-error --max-time "$HTTP_TIMEOUT" \
-         -D "$HDR" --output "$TMP" "$DASHBOARD_URL"
+echo "[2/7] 下载图片（逐个出口试）…"
+if command -v curl >/dev/null 2>&1; then TOOL=curl; else TOOL=wget; fi
+echo "      用 $TOOL，单个出口最多等 $HTTP_TIMEOUT s"
+CHOSEN=""
+for url in $DASHBOARD_URLS; do
+    rm -f "$TMP" "$HDR"
+    # 带一次性参数破 CDN 缓存：jsDelivr 对分支引用最长缓存 12 小时
+    case "$url" in
+        *\?*) full="$url&t=$(date +%s)" ;;
+        *)    full="$url?t=$(date +%s)" ;;
+    esac
+    start=$(date +%s)
+    if [ "$TOOL" = "curl" ]; then
+        curl -L --silent --show-error --max-time "$HTTP_TIMEOUT" \
+             -D "$HDR" --output "$TMP" "$full"
+    else
+        wget -q -T "$HTTP_TIMEOUT" --server-response -O "$TMP" "$full" 2>"$HDR"
+    fi
     rc=$?
-else
-    echo "      使用 wget"
-    wget -q -T "$HTTP_TIMEOUT" --server-response -O "$TMP" "$DASHBOARD_URL" 2>"$HDR"
-    rc=$?
-fi
-echo "      返回码 $rc，耗时 $(( $(date +%s) - start ))s"
-if [ "$rc" -ne 0 ] || [ ! -s "$TMP" ]; then
-    echo "      下载失败。按返回码对照："
+    cost=$(( $(date +%s) - start ))
+    host=$(printf '%s' "$url" | sed 's#^https\?://##; s#/.*##')
+    [ "$rc" = "0" ] && [ ! -s "$TMP" ] && rc=90
+    if [ "$rc" != "0" ]; then
+        echo "      ✗ $host  rc=$rc（$(rc_meaning "$rc")）  ${cost}s"
+        continue
+    fi
+    magic=$(head -c 4 "$TMP" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    if [ "$magic" != "89504e47" ]; then
+        echo "      ✗ $host  回来的不是 PNG（文件头 $magic，多半是 404 页面）  ${cost}s"
+        continue
+    fi
+    CHOSEN="$host"
+    echo "      ✓ $host  $(wc -c <"$TMP") 字节  ${cost}s"
+    break
+done
+
+if [ -z "$CHOSEN" ]; then
+    echo ""
+    echo "      所有出口都没拿到图。返回码对照："
     echo "        6  = 域名解析失败（WiFi 没通或 DNS 有问题）"
-    echo "        7  = 连不上服务器（服务没在跑，或防火墙挡了）"
-    echo "        28 = 超时（网络慢，把 HTTP_TIMEOUT 调大）"
+    echo "        7  = 连不上服务器（IP 被挡、或对方没在听）"
+    echo "        28 = 超时（链路丢包，或 HTTP_TIMEOUT 太小）"
     echo "        35/60 = TLS 问题（设备时间不对会全线 https 失败，先校时）"
+    echo "        90 = 命令成功但下载回来是空文件"
     exit 1
 fi
 

@@ -132,21 +132,48 @@ wait_for_wifi() {
 # ---------------------------------------------------------------------------
 # 下载图片。优先 curl，其次 wget —— 两者在不同固件上的去留不一样，所以都试。
 # 顺手把响应头存下来：服务器会带一个 X-Epoch，用来给设备校时。
+# 返回码的含义写进日志用。以前只写"下载失败"，于是"DNS 不通 / 连不上 / 证书被拒 /
+# 超时"这四种完全不同的病在日志里长得一模一样，只能靠反复插拔试出来。
+rc_meaning() {
+    case "$1" in
+        0)  echo "成功" ;;
+        6)  echo "域名解析失败（DNS 不通）" ;;
+        7)  echo "连不上服务器（被墙、IP 不通、或对方没在听）" ;;
+        28) echo "超时（链路丢包，或 HTTP_TIMEOUT 太小）" ;;
+        35) echo "TLS 握手失败" ;;
+        60) echo "证书不受信任（设备时间错、或根证书太旧）" ;;
+        90) echo "命令没问题，但下载回来是空文件" ;;
+        *)  echo "未知返回码" ;;
+    esac
+}
+
+# 下一个地址。失败原因留在 last_rc 里给调用方写日志。
+# 每次请求都带一个一次性参数：jsDelivr 对分支引用最长缓存 12 小时，
+# 不破除的话屏幕能停在半天前；raw 和 Pages 会忽略这个参数，所以三家统一加。
 download_image() {
     url="$1"
     out="$2"
-    rm -f "$HDR" 2>/dev/null
+    stamp=$(/bin/date +%s 2>/dev/null || echo 0)
+    case "$url" in
+        *\?*) full="$url&t=$stamp" ;;
+        *)    full="$url?t=$stamp" ;;
+    esac
+    rm -f "$HDR" "$out" 2>/dev/null
     if command -v curl >/dev/null 2>&1; then
         curl -L --silent --show-error --max-time "$HTTP_TIMEOUT" \
-             -D "$HDR" --output "$out" "$url" && [ -s "$out" ]
-        return $?
+             -D "$HDR" --output "$out" "$full"
+        last_rc=$?
+        [ -s "$out" ] || last_rc=90
+        return "$last_rc"
     fi
     if command -v wget >/dev/null 2>&1; then
-        wget -q -T "$HTTP_TIMEOUT" --server-response -O "$out" "$url" 2>"$HDR" \
-             && [ -s "$out" ]
-        return $?
+        wget -q -T "$HTTP_TIMEOUT" --server-response -O "$out" "$full" 2>"$HDR"
+        last_rc=$?
+        [ -s "$out" ] || last_rc=90
+        return "$last_rc"
     fi
     log "错误：curl 和 wget 都没有，无法下载"
+    last_rc=127
     return 1
 }
 
@@ -448,18 +475,30 @@ refresh() {
         return 1
     fi
 
-    # 主地址失败就退到备用地址。两个都失败才算这一轮失败。
-    # 顺序很重要：主地址在公网，电脑关机也能出图；备用地址默认留空（理由见 config.sh ①）。
+    # 按顺序试 config.sh 里那一串出口，第一个拿到合法 PNG 的就用。
+    # 三家给的都是同一个仓库里的同一个文件，所以退到后面那条不会换版式 ——
+    # 以前"备用地址"最坑的就是这个。
+    # 每条失败都写清返回码：这台机器上"连不上"和"证书不认"和"超时"是完全不同的病，
+    # 混成一行"下载失败"的话，只能靠反复插拔去猜。
+    last_rc=0
     got=0
-    for url in "$DASHBOARD_URL" "$DASHBOARD_FALLBACK_URL"; do
-        [ -n "$url" ] || continue
-        if download_image "$url" "$TMP" && image_is_sane "$TMP"; then
-            got=1
-            [ "$url" = "$DASHBOARD_URL" ] || log "主地址失败，已改用备用地址：$url"
-            break
+    tried=0
+    for url in $DASHBOARD_URLS; do
+        tried=$((tried + 1))
+        if download_image "$url" "$TMP"; then
+            if image_is_sane "$TMP"; then
+                got=1
+                host=$(printf '%s' "$url" | sed 's#^https\?://##; s#/.*##')
+                log "取图成功：走 $host"
+                break
+            fi
+            # 200 但内容不是图：多半是 404 页面、或者地址写错跳到了登录页
+            log "  拿回来的不是合法 PNG（地址错了、或仓库还没这张图）：$url"
+        else
+            log "  这个出口不行（rc=$last_rc $(rc_meaning "$last_rc")）：$url"
         fi
-        log "下载或校验失败：$url"
     done
+    [ "$got" = "0" ] && [ "$tried" = "0" ] && log "!! DASHBOARD_URLS 是空的，没地址可试"
 
     if [ "$got" = "1" ]; then
         sync_clock
@@ -633,8 +672,8 @@ cleanup() {
 
 init() {
     log "=== 启动 AI 信息屏 ==="
-    log "URL: $DASHBOARD_URL"
-    [ -n "$DASHBOARD_FALLBACK_URL" ] && log "备用: $DASHBOARD_FALLBACK_URL"
+    log "出口地址（按顺序试）："
+    for u in $DASHBOARD_URLS; do log "   $u"; done
     log "整图：时刻表在本机（REFRESH_AT=${REFRESH_AT:-未设置}），算不出来才退回 白天 ${UPDATE_INTERVAL}s / 夜间 ${NIGHT_INTERVAL}s"
     # 这一行是拿来当场核表的：屏幕上的时间就是这个 date 的输出，
     # 和你对着手表看到的时刻不一样 → 就是 config.sh 的 TIMEZONE 错了，别改别的。

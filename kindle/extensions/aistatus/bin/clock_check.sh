@@ -111,8 +111,7 @@ done
 if [ "$ok" = "1" ]; then
     rm -f "$TMP" "$HDR"
     got=0
-    for url in "$DASHBOARD_URL" "$DASHBOARD_FALLBACK_URL"; do
-        [ -n "$url" ] || continue
+    for url in $DASHBOARD_URLS; do
         if command -v curl >/dev/null 2>&1; then
             curl -L --silent --show-error --max-time "$HTTP_TIMEOUT" \
                  -D "$HDR" --output "$TMP" "$url" && got=1

@@ -19,8 +19,8 @@ if [ -f "$DIR/.running" ]; then
 fi
 
 # 顺手检查一下配置里最容易忘的一项
-if grep -qE 'example|DASHBOARD_URL=""' "$DIR/config.sh" 2>/dev/null; then
-    echo "警告：config.sh 里的 DASHBOARD_URL 还没填（或还是示例地址），图片会下载失败。"
+if grep -qE 'example|DASHBOARD_URLS=""' "$DIR/config.sh" 2>/dev/null; then
+    echo "警告：config.sh 里的 DASHBOARD_URLS 还没填（或还是示例地址），图片会下载失败。"
 fi
 
 rm -f "$DIR/.stop"
