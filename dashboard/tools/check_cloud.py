@@ -158,7 +158,7 @@ def check(url: str, cfg_size: tuple[int, int] | None) -> bool:
 
     say(f"  content-type    = {hl.get('content-type')}")
     say(f"  cache-control   = {hl.get('cache-control')}"
-        "   · raw 的 CDN 缓存约 5 分钟，所以 REFRESH_LAG 必须比出图点晚一截")
+        "   · raw / Pages 前面都有一层 CDN 缓存，所以设备取图对齐到每小时第 10 分而不是整点")
 
     is_png = body[:8] == bytes.fromhex("89504e470d0a1a0a")
     say(f"  magic           = {body[:8].hex()}"

@@ -11,8 +11,8 @@ name: 生成信息屏
 # 每小时 = 屏上任何数字最多旧 1 小时。公开仓库的 Actions 额度不限量，
 # 24 次/天 × 约 35 秒，成本仍然是 ¥0。
 #
-# 配套的另一半在设备上：kindle/extensions/aistatus/config.sh 的 UPDATE_INTERVAL=3600。
-# 这边每小时出一张、那边每小时来取，节奏要对得上。
+# 配套的另一半在设备上：config.sh 的 FETCH_EVERY_HOURS=1 + FETCH_ALIGN_MINUTE=10。
+# 那边每小时第 10 分来取，正好等这边整点跑完 + CDN 缓存过期。
 
 on:
   schedule:

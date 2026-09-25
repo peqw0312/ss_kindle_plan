@@ -53,53 +53,30 @@ Kindle 拉图显示。
 - **命令行参数约定**：`python dashboard/generate.py -c dashboard/config.yaml`
   从仓库根目录执行；config 里的所有相对路径都以仓库根为基准。
 
-## 云端出图服务（`dashboard/app.py`）
+## 出图与投递（GitHub 一条路）
 
-标准库 `http.server`，`PORT` 环境变量注入，绑 `0.0.0.0`。四个不变量，少一个就会出
-"两端日志全绿但屏幕不动"这种最难查的故障：
+`dashboard/app.py` / `serve.py` / `install_task.py` 那一套自建服务**已于 2026-09-24 删除**，
+本节原来记的四个不变量（禁缓存头、重建单飞、冷启动预热、`/health` 判读）随它一起作废。
+下面只记现在还成立的部分。
 
-1. **响应头必须禁缓存**（`no-store` + 摘掉条件请求）。理由同 `serve.py`：
-   304 → Kindle 的 curl 当成"下载成功但不写文件"。
-2. **重建失败不清旧图**，继续发上一张好的，把原因记进 `/health` 的 `reason`。
-   屏幕上显示"20 分钟前的图"远好过显示空白或 500。
-3. **重建要单飞**。已有图在手时不抢锁，直接发旧图，让正在重建的线程慢慢算 ——
-   请求不该为了"新 30 秒"多等 5 秒。没图时才阻塞等。
-4. **冷启动要预热**：起进程时后台先算一张，否则第一个请求干等 3~8 秒。
-
-- 三个路径：`/dashboard.png`（Kindle 用，带 **`X-Epoch`** 校时 + **`X-Next-Image`**
-  下发时刻表，`?force=1` 强制重算）、
-  `/`（给人看的预览页）、`/health`（排障唯一入口）。
-- **出图节奏是"时刻表"不是"固定间隔"**：`cloud.refresh_at` 默认
-  `["00:05","05:10","12:00","15:05"]`。四个点各自有理由，别删：
-  `00:05` 翻日期（不然上午还是昨天的日期）、`05:10` 美股收盘（夏令时 04:00 /
-  冬令时 05:00，取两者之后，一年不用改）、`12:00`、`15:05` A 股收盘。
-  留空才退回 `cloud.refresh_minutes`（默认 15）的固定间隔。
-- **时刻表会通过 `X-Next-Image` 头下发给 Kindle（2026-09 起），所以它现在同时决定
-  "图什么时候变新"和"Kindle 多久去看一眼"** —— 别再当成两回事。改 `refresh_at`
-  重新发布即可，Kindle 端 `config.sh` 的 `UPDATE_INTERVAL` 只在**收不到这个头**时
-  才生效（局域网 `serve.py` 不发，它只是静态发文件、不参与调度）。
-  `Board.next_fetch_at()` 是这条链的唯一出口，三种情况别搞混：
-  手里图是新的 → 下一档 + `BUILD_GRACE_SECONDS`(120s)；刚过点且重建在路上 →
-  `STALE_RETRY_SECONDS`(300s) 后再来（**不能**报下一档，否则 00:05:01 来问的
-  设备会被告知"睡到 05:10"，把这一档整个错过）；过期很久（= 重建一直失败）→
-  仍然报下一档，别退化成高频轮询，上游挂掉时反复短轮询比原来的小时轮询更费电。
-  **Kindle 端 `next_image_from_headers` 只接受「未来 12 小时内」的值，这个窗口
-  两端必须一致**：服务端发出超窗口的值，客户端当没收到、静默退回轮询，
-  优化等于没做（`check_cloud.py` 会按同一个 43200s 判据点名）。
-- **拉回来的图和屏幕上那张逐字节相同时直接跳过刷新**（`aistatus.sh` 里 `cmp -s`）。
-  `eips -f` 是整屏黑白闪一遍，白闪对墨水屏是纯损耗。
-- **时刻一律按 `location.timezone` 判定，不能用容器本地时间**：云端容器跑 UTC，
-  按本地判会让 `00:05` 落到北京 `08:05`。`class Schedule` 负责这件事，
-  `_verify_clock.py` 里有专门的 UTC 陷阱用例。
-- **Windows 上没有 IANA 时区库**：`ZoneInfo("Asia/Shanghai")` 会抛
-  `ZoneInfoNotFoundError`（未装 `tzdata`）。`app.resolve_zone()` 捕获后退回本机时区
-  （中国无夏令时，等价）并打日志 —— 否则本机试跑直接崩。
-- **`X-Epoch` 是功能必需，不是装饰**：时钟由 Kindle 本机画之后，设备时间准不准
-  直接决定屏幕上的时间对不对。Kindle 拿这个头对表，偏超过
-  `CLOCK_SYNC_TOLERANCE`（默认 120s）就自动校准。`app.py` 和 `serve.py` 都带。
-- **`/health` 的判读**：`age_seconds` **一直涨是正常的**（一天只出四次），
-  判断"是不是卡住"要看 `next_build_at` 必须是未来时间；
-  `clock_region` 必须和 Kindle 上 `clock/clock.conf` 的 `X/Y/W/H` 一致。
+- **链路**：`.github/workflows/build.yml`（cron，UTC）跑 `generate.py` →
+  **覆盖**到专用分支 `screen`（孤儿提交，历史永远一个提交，主分支不收生成物）→
+  Pages / jsDelivr / raw 三个出口都指向 `screen` 的 `dashboard.png`。
+- **设备侧节奏只有一个来源**：`config.sh` 的 `FETCH_EVERY_HOURS` + `FETCH_ALIGN_MINUTE`
+  + `QUIET_START`/`QUIET_END`。原来的 `REFRESH_AT` / `REFRESH_LAG` / `UPDATE_INTERVAL` /
+  `NIGHT_INTERVAL` / `ACTIVE_START`/`END` 六个旋钮已合并成这四个 —— 它们管的是同一件事，
+  留六份必然出现"改一处漏一处"。
+  对齐到每小时第 10 分是实测出来的：Actions 整点起跑、跑完两三分钟，前面还有一层 CDN 缓存。
+- **四个出图点的历史理由仍然成立**，现在写在 `config.yaml` 第 ⑪ 节的注释里
+  （`00:05` 翻日期、`05:10` 美股收盘、`12:00`、`15:05` A 股收盘）。改成每小时之后被自然覆盖。
+- **时刻一律按 `location.timezone` 判定**，cron 那一侧记得 UTC 差 8 小时。
+- **拉回来的图和屏幕上那张逐字节相同时跳过刷新** —— 这条**没有实现过**，
+  以前记在这里是错的（`aistatus.sh` 里没有 `cmp`）。整图每次都 `eips -f` 全刷。
+- **`X-Next-Image` / `X-Epoch` 现在都不存在了**（GitHub 发不了自定义头）。
+  `next_image_from_headers` 留着是因为零副作用：哪天再跑一个自建 HTTP 服务就自动生效，
+  但它接受「未来 12 小时内」的判据（43200s）必须和服务端一致，否则客户端当没收到。
+- **设备时间校准这条路现在是死的**（没有 `X-Epoch` 可对表）。后果：`FETCH_*` 算的是本机
+  `date`，钟错则取图时点跟着错位。`TIMEZONE="CST-8"` 因此更关键，别留空。
 - **云端没有你本机的环境变量** → 和风的 Key 必须写进 `dashboard/config.yaml`，
   不能只靠 `QWEATHER_KEY`。
 - **图上所有文字（含时钟精灵图）统一走 `fonts.book_for(cfg)`**。`config.yaml` 的
@@ -189,26 +166,32 @@ Kindle 拉图显示。
 就是每天弹四次黑窗口那个）都已退役，理由见下面第一条。
 
 - **为什么放弃自建**：这三个东西都要求"电脑开着且不睡"。用户明确否掉了
-  （"我的个人电脑不是服务器"）。而且计划任务只往本地写文件、不上传，
-  弹窗纯属白跑。当初列的"GitHub 不行"的三条理由，实测两条是错的：
-  本机到 `raw`/`pages`/`api`/`git ls-remote` 四个端点 1~1.4 秒可达，不需要代理。
-- **现在的链路**：`.github/workflows/build.yml` 按四个 UTC 时刻跑 `generate.py`
-  → 把 `docs/dashboard.png` 提交回本仓库 → Kindle 拉
-  `raw.githubusercontent.com/<owner>/<repo>/main/docs/dashboard.png`。
+  （"我的个人电脑不是服务器"）。而且计划任务只往本地写文件、不上传，弹窗纯属白跑。
+- ⚠️ **在这台电脑上测 GitHub 可达性不算数**：本机装了 GitHub 加速工具
+  （hosts 把 `github.com` / `raw.githubusercontent.com` / `api.github.com` / `github.io`
+  等几十个域名全指到 `127.0.0.1`，本地 443 在应答，证书 `CN=steamcommunity.com`）。
+  所以"raw 0.3 秒可达""git ls-remote 1.1 秒"那两条 2026-09-22 的结论**是它替答的**。
+  绕开 hosts 用真 IP 复测（2026-09-24）：`raw.githubusercontent.com` 的 IP **TCP 连不上**
+  （6 秒超时），而 `peqw0312.github.io`（Pages）0.5 秒正常回应、`api.github.com` 通。
+  设备上那条 61 秒的失败日志正好等于 `HTTP_TIMEOUT` —— 就是撞在这堵墙上。
+  **判断设备能不能取到图，只能看设备日志**（`refresh.log` / `aistatus.log`）。
+- **现在的链路**：`.github/workflows/build.yml` 每小时跑一次 `generate.py`
+  → **覆盖**到专用分支 `screen` → Pages 从该分支根目录发布 →
+  Kindle 按 `https://<user>.github.io/<repo>/dashboard.png` 优先取。
   **仓库必须公开**（Kindle 没法带 token 认证，私有 Pages 是付费功能），
   所以 `config.yaml` 里的经纬度只保留 2 位小数（≈1 公里），别改回去。
-- **时刻表搬到了设备上**：GitHub 的 raw 是静态文件，**发不了自定义头**，
-  所以原来那套"云端用 `X-Next-Image` 告诉 Kindle 几点再来"没了。
-  现在由 `config.sh` 的 `REFRESH_AT` + `REFRESH_LAG` 在本机算
-  （`seconds_to_next_slot()`，纯整数运算，不碰 `date -d`）。
-  ⚠️ **`REFRESH_AT` 和 `config.yaml` 的 `cloud.refresh_at` 是同一张表的两个副本，
-  改的时候必须一起改** —— 不一致不会报错，只会让 Kindle 在没有新图的时间点
-  白连一次 WiFi 拿回旧图。`REFRESH_LAG`（默认 600s）是给 Actions 跑完 +
-  raw 的约 5 分钟 CDN 缓存留的余量，卡在整点去拉必然拿到旧图。
-  `next_image_from_headers()` 那条分支留着不删：它没有副作用，
-  哪天再跑一个自建 HTTP 服务当备用出口就自动生效。
-- **Actions 跑在美国机房**，它抓不抓得动国内数据源（Open-Meteo / 腾讯行情）
-  是这条方案**唯一没验证过的风险**。本地测不出来，只能看第一次定时任务的日志。
+- **取图节奏完全在设备本机算**（GitHub 发不了自定义头，`X-Next-Image` 那套没了）：
+  `config.sh` 的 `FETCH_EVERY_HOURS` + `FETCH_ALIGN_MINUTE` + `QUIET_START`/`QUIET_END`，
+  由 `minutes_until_next_fetch()` 求"下一个对齐到第 N 分、且不在安静期里"的档位。
+  纯整数运算 + `date +%H:%M`，**不碰 `date -d`**（busybox 上解析失败是静默的）。
+  原来那六个管同一件事的旋钮（`REFRESH_AT`/`REFRESH_LAG`/`UPDATE_INTERVAL`/
+  `NIGHT_INTERVAL`/`ACTIVE_START`/`ACTIVE_END`）已删除 —— 留六份必然改一处漏一处。
+  `next_image_from_headers()` 那条分支留着：零副作用，哪天再跑自建 HTTP 服务就自动生效。
+- **Actions 跑在美国机房抓国内源 —— 已验证可用**（2026-09-24）：runner 生成的图里
+  上证 3,906、Open-Meteo 天气完整，和同一时间本机抓的数值不同，说明确实是新抓的。
+- **但 GitHub 的 `schedule` 目前一次都没触发过**（`event=schedule` 运行数 = 0，
+  文件里 cron 是 `0 * * * *"、workflow state=active）。所以屏上"更新"时间会长时间不动。
+  新仓库的定时被延迟是已知现象，**要观察到第二天**；仍不触发就得换不依赖 cron 的做法。
 - 公开仓库满 60 天无活动会自动关掉 schedule —— 长期不用之后突然不更新，先查这里。
 
 ## 天气源（和风为主 + Open-Meteo 兜底）

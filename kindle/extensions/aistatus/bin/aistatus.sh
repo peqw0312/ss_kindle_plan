@@ -5,7 +5,8 @@
 #  省电逻辑说明（这是整个项目最关键的一段，别随手改）：
 #    设备绝大多数时间在 `echo mem` 里睡死，墨水屏保持画面本身零功耗。
 #    醒来的节奏由两件事决定，取更短的那个：
-#      · 整图时刻表 —— 现在在设备本机算（config.sh 的 REFRESH_AT），一天 4~5 次
+#      · 取图节奏 —— 设备本机算：每 FETCH_EVERY_HOURS 小时一次，对齐到每小时
+#        第 FETCH_ALIGN_MINUTE 分；QUIET_START~QUIET_END 这段时间完全不联网
 #      · STOP_CHECK_MAX_SLEEP —— 为了「停止信息屏」能在 10 分钟内生效，
 #        再长的觉也切成 10 分钟一段来睡（一天醒 144 次，仍然远比贴钟时省）
 #
@@ -234,7 +235,7 @@ sync_clock() {
 #
 # 只有我们自己跑的 HTTP 服务才会发这个头。GitHub 的 raw 地址是静态文件，
 # 发不了自定义头，所以走 GitHub 时这个函数基本恒返回 1 —— 这是预期的，
-# 时刻表由下面的 seconds_to_next_slot 在本机算。留着这条分支是因为它无副作用：
+# 时刻表由下面的 minutes_until_next_fetch 在本机算。留着这条分支是因为它无副作用：
 # 哪天把自建服务当备用出口再开起来，不用改这边一行。
 #
 # 单位是 epoch 秒；被中间层改坏、或设备时间被校歪时，只接受
@@ -368,22 +369,18 @@ is_low_battery() {
     [ "$bat" -le "$LOW_BATTERY_THRESHOLD" ]
 }
 
-current_interval() {
-    hour=$(date +%H)
-    # 别用 `$((10#$hour))`：busybox 的 ash 不保证认这种带基数的写法，一报错
-    # 这个函数就**输出空**，于是 plan_next_image 里 `$((pnow + 空))` 跟着报错、
-    # next_image_at 变成空串 —— 而空串在主循环里会让 `[ now -ge "" ]` 直接返回
-    # 假，结果"永远不到点"，屏幕冻在一张图上 79 分钟，日志一个字都不写。
-    # 但也不能退回 `$((hour))`：08 / 09 会被当八进制报错，是同一个坑。
-    # 剥掉前导零最稳。
-    hour=${hour#0}
-    [ -n "$hour" ] || hour=0
-    if is_low_battery; then
-        echo "$LOW_BATTERY_INTERVAL"
-    elif [ "$hour" -lt "$ACTIVE_START" ] || [ "$hour" -ge "$ACTIVE_END" ]; then
-        echo "$NIGHT_INTERVAL"
+# 这个小时在不在安静期里。QUIET_START / QUIET_END 任一为空 = 不启用。
+# 支持跨零点（比如 22 到 7）。
+in_quiet_hour() {
+    [ -n "$QUIET_START" ] && [ -n "$QUIET_END" ] || return 1
+    s=$QUIET_START
+    e=$QUIET_END
+    case "$s$e" in *[!0-9]*) return 1 ;; esac
+    [ "$s" -le 23 ] && [ "$e" -le 23 ] || return 1
+    if [ "$s" -lt "$e" ]; then
+        [ "$1" -ge "$s" ] && [ "$1" -lt "$e" ]
     else
-        echo "$UPDATE_INTERVAL"
+        [ "$1" -ge "$s" ] || [ "$1" -lt "$e" ]
     fi
 }
 
@@ -415,30 +412,51 @@ now_minutes() {
     hm_to_min "$(date +%H:%M 2>/dev/null)"
 }
 
-# 输出：秒。REFRESH_AT 为空或全写坏了 → 返回 1，让调用方退回固定间隔。
-seconds_to_next_slot() {
-    [ -n "$REFRESH_AT" ] || return 1
-    now_min=$(now_minutes)
-    [ -n "$now_min" ] || return 1
-    best=-1
-    for slot in $REFRESH_AT; do
-        sm=$(hm_to_min "$slot")
-        [ -n "$sm" ] || continue
-        d=$(( sm - now_min ))
-        # 已经过了就顺延到明天那一档。等于 0 也算过 —— 此刻图还在 Actions 里跑。
-        [ "$d" -gt 0 ] || d=$(( d + 1440 ))
-        if [ "$best" -lt 0 ] || [ "$d" -lt "$best" ]; then best=$d; fi
+# 距离下一个取图时刻还有多少**分钟**。规则只有一条：每隔
+# FETCH_EVERY_HOURS 小时取一次，并且落在每小时的第 FETCH_ALIGN_MINUTE 分上。
+#
+# 为什么要对齐到一个固定的分钟：不对齐的话 next 是"上次成功 + 3600 秒"推出来的，
+# 于是取图时刻每天往后漂（18:11、19:14、20:22……），屏上"更新 HH:MM"看着就没规律。
+# 对齐到第 10 分是因为 Actions 整点才开始跑，跑完提交要两三分钟，前面还有一层
+# CDN 缓存 —— 卡在整点去取必然拿到上一张。
+#
+# 全程只用整数加减乘和 date 的字段，不碰 `date -d`：busybox 的 date 对 `-d`
+# 的支持随固件版本变，解析失败会**静默**返回空，那就又是"屏幕冻一整天、
+# 日志一个字不写"那一类坑。小时数也不写 $((10#$h))，ash 不保证认 —— 剥前导零。
+minutes_until_next_fetch() {
+    step=${FETCH_EVERY_HOURS:-1}
+    case "$step" in ''|*[!0-9]*) step=1 ;; esac
+    [ "$step" -ge 1 ] && [ "$step" -le 12 ] || step=1
+    am=${FETCH_ALIGN_MINUTE:-10}
+    case "$am" in ''|*[!0-9]*) am=10 ;; esac
+    [ "$am" -le 59 ] || am=10
+
+    now_min=$(now_minutes) || return 1
+    cur_h=$(( now_min / 60 ))
+    cur_m=$(( now_min % 60 ))
+
+    h=$cur_h
+    [ "$cur_m" -ge "$am" ] && h=$(( h + 1 ))
+    while [ $(( h % step )) -ne 0 ]; do h=$(( h + 1 )); done
+
+    # 再往后跳过安静期。上限 48 档，防的是"整天都设成安静期"这种自相矛盾的写法。
+    i=0
+    while [ "$i" -le 48 ]; do
+        if ! in_quiet_hour $(( (h + i * step) % 24 )); then
+            echo $(( (h + i * step) * 60 + am - now_min ))
+            return 0
+        fi
+        i=$(( i + 1 ))
     done
-    [ "$best" -gt 0 ] || return 1
-    echo $(( best * 60 + ${REFRESH_LAG:-600} ))
+    return 1
 }
 
 # ---------------------------------------------------------------------------
 # 定好下一次拉整图的时刻。优先级是刻意的：
-#   低电量 > 云端下发的时刻表 > 本机时刻表 > 本机固定间隔
-# 低电量必须排在最前面 —— 服务器不知道这台设备的电量，那种时候省电比"几点换新图"重要。
+#   低电量 > 云端下发的时刻表 > 本机对齐时刻表
+# 低电量排最前 —— 服务器不知道这台设备的电量，那种时候省电比"几点换新图"重要。
 # 中间那条 X-Next-Image 分支留着不删：哪天自己再跑一个 HTTP 服务当备用出口，
-# 它不用改这边一行就立刻生效；而 GitHub 不发这个头，函数直接返回 1 走到下一档。
+# 它不用改这边一行就立刻生效；而 GitHub 不发这个头，函数直接返回空走到下一档。
 plan_next_image() {
     pnow=$(now_epoch)
     if is_low_battery; then
@@ -451,13 +469,16 @@ plan_next_image() {
         echo "$sched"
         return 0
     fi
-    sched=$(seconds_to_next_slot)
-    if [ -n "$sched" ]; then
-        log "按本机时刻表（${REFRESH_AT}），约 $(( sched / 60 )) 分钟后再来取"
-        echo $((pnow + sched))
+    mins=$(minutes_until_next_fetch)
+    if [ -n "$mins" ]; then
+        log "下次取图：${mins} 分钟后（每 ${FETCH_EVERY_HOURS:-1} 小时、第 ${FETCH_ALIGN_MINUTE:-10} 分；安静期 ${QUIET_START:-无}-${QUIET_END:-无} 点）"
+        echo $((pnow + mins * 60))
         return 0
     fi
-    echo $((pnow + $(current_interval)))
+    # 算不出来（配置写坏了）也要有个节奏，而且必须喊出来 —— 静默不刷新是本项目
+    # 栽过最多次的那类故障。
+    log "!! 算不出取图时刻，先按 3600s 兜底（查 FETCH_EVERY_HOURS / QUIET_START / QUIET_END）"
+    echo $((pnow + 3600))
 }
 
 # ---------------------------------------------------------------------------
@@ -674,7 +695,7 @@ init() {
     log "=== 启动 AI 信息屏 ==="
     log "出口地址（按顺序试）："
     for u in $DASHBOARD_URLS; do log "   $u"; done
-    log "整图：时刻表在本机（REFRESH_AT=${REFRESH_AT:-未设置}），算不出来才退回 白天 ${UPDATE_INTERVAL}s / 夜间 ${NIGHT_INTERVAL}s"
+    log "整图：每 ${FETCH_EVERY_HOURS:-1} 小时取一次、对齐到第 ${FETCH_ALIGN_MINUTE:-10} 分；安静期 ${QUIET_START:-无}-${QUIET_END:-无} 点（这段时间不联网）"
     # 这一行是拿来当场核表的：屏幕上的时间就是这个 date 的输出，
     # 和你对着手表看到的时刻不一样 → 就是 config.sh 的 TIMEZONE 错了，别改别的。
     log "设备时间 $(date '+%Y-%m-%d %H:%M:%S')（TZ=${TZ:-未设置}，epoch $(date +%s)）"
@@ -821,7 +842,7 @@ main_loop() {
         if [ ! -f "$IMG" ] || [ "$now" -ge "$next_image_at" ]; then
             if refresh; then
                 # 下一次几点来才有新图：先看服务器有没有塞 X-Next-Image（只有我们自己
-                # 跑的 HTTP 服务会塞），没有就按 config.sh 的 REFRESH_AT 自己算
+                # 跑的 HTTP 服务会塞），没有就按本机的 FETCH_* / QUIET_* 自己算
                 next_image_at=$(plan_next_image)
                 case "$next_image_at" in
                     ''|*[!0-9]*) next_image_at=0 ;;

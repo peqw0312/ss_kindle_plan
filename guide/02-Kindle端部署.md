@@ -89,14 +89,11 @@ CLOCK_INTERVAL=60         # 只有 local 才有意义：多久贴一次
 CLOCK_WAVE=du             # 贴图波形。du 最快不闪屏；没反应就试 gl16 或 gc16
 
 # ── 整图刷新节奏（②）───────────────────────────────────────
-#    时刻表现在在**设备上**：GitHub 的 raw 是静态文件，发不了自定义头，
-#    所以以前那套"云端用 X-Next-Image 告诉设备几点再来"没了。
-REFRESH_AT="00:05 05:10 12:00 15:05"   # 北京时间，和 build.yml 的 cron 对齐
-REFRESH_LAG=600           # 到点再多等 10 分钟：Actions 要跑几分钟 + CDN 缓存 5 分钟
-UPDATE_INTERVAL=3600      # 兜底：时刻表算不出来时白天多久拉一次（秒）
-NIGHT_INTERVAL=10800      # 兜底：夜间多久拉一次（秒）
-ACTIVE_START=6            # 活跃时段从几点开始
-ACTIVE_END=23             # 23 点以后转夜间节奏
+#    取图节奏完全在设备本机算（GitHub 发不了自定义头，云端没法告诉设备几点再来）
+FETCH_EVERY_HOURS=1       # 每隔几小时取一次
+FETCH_ALIGN_MINUTE=10     # 落在每小时的第几分（Actions 整点起跑，跑完要两三分钟）
+QUIET_START=1             # 凌晨 1 点起
+QUIET_END=7               # 到 7 点前完全不联网（那几个小时没人看，别白开射频）
 FULL_REFRESH_EVERY=1      # 1 = 每次整图都全刷，顺手清掉残影
 
 # ── 省电（⑤）──────────────────────────────────────────────
@@ -281,11 +278,11 @@ Kindle 上打开 **KUAL → AI 信息屏 → 「⟳ 测试下载并刷新一次�
 | 你想要 | 改哪里 |
 |---|---|
 | 屏幕上的时间更省电（牺牲分钟精度） | `CLOCK_INTERVAL=300`（每 5 分钟贴一次） |
-| 完全不贴本机时钟 | `CLOCK_MODE=off`，**并把电脑上 `config.yaml` 的 `clock.mode` 改回 `image`** |
+| 完全不贴本机时钟 | `CLOCK_MODE=off`（**现在就是这个，最省电**），并且电脑上 `config.yaml` 的 `clock.mode` 也要是 `"off"`。两边不一致的话：那边 `image` → 图上画一个几小时前的假时间；那边 `local` → 右上角永远一块空白 |
 | 时钟显示糊 / 贴不上去 | `CLOCK_WAVE=gl16`（老固件对 `du` 支持不一） |
-| 想让图更及时 | **改云端而不是这里**：`dashboard/config.yaml` 的 `cloud.refresh_at` 加一个时刻，重新发布。Kindle 会自动跟着新时刻表走 |
+| 想让图更及时 | 设备上改 `FETCH_EVERY_HOURS=1`（已经是 1）；**真正卡着的是云端** —— Actions 的 cron 在 `.github/workflows/build.yml`，两边要一起动 |
 | 画面残影明显 | `FULL_REFRESH_EVERY=1`（每次整图都全刷，默认就是 1） |
-| 更省电 | `CLOCK_INTERVAL=300`（这个才是大头）。整图那侧不用调 —— 云端已经把轮询降到一天四五次了 |
+| 更省电 | 先确认它**真的睡进去了**（日志里"计划 600s，实际睡了 XXXs"）；睡不进去比什么都费电。其次 `QUIET_START`/`QUIET_END` 把没人看的时段整段关掉，再其次 `STOP_CHECK_MAX_SLEEP` 调大 |
 | 设备时间总是不对 | 保持 `CLOCK_SYNC=1`；实在校不上见 [排障手册](04-排障手册.md) 的"时间不准"一节 |
 | 想保留书架界面 | `STOP_FRAMEWORK=0`（耗电明显变快） |
 | 屏幕角落显示状态文字 | `SHOW_STATUS_LINE=1`，再调 `STATUS_ROW`（按字符行算，自己试） |
