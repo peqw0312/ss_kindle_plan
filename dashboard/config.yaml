@@ -158,18 +158,27 @@ clock:
 
 # -----------------------------------------------------------------------------
 # ⑥ 天气
-#    主源：和风天气 —— 国内站点融合实况 + 官方合作数据，带空气质量和灾害预警
-#    兜底：Open-Meteo —— 免 Key、不限量，没配和风的 Key 时自动顶上
+#    主源：和风天气 —— 国内站点观测口径，带空气质量和**灾害预警**（Open-Meteo 没有预警）
+#    兜底：Open-Meteo —— 免 Key、不限量，下面两项空着就自动用它
 #
-#    和风天气怎么开通（免费，只要手机号或邮箱，不绑卡不实名）：
-#      1. 打开 https://dev.qweather.com 注册，选「免费订阅」
-#      2. 控制台 → 项目管理 → 创建项目（类型选 Web API）
-#      3. 控制台 → 设置 / 项目管理里能看到两个东西，抄到下面：
-#           API Host：形如 xxxxxx.re.qweatherapi.com
-#           API Key ：一串 32 位字符
-#      ⚠️ 旧域名 devapi.qweather.com 已于 2026-01 停服、api.qweather.com 于
-#         2026-06 停服。网上教程大多还写着旧域名，照抄一定失败。
-#      ⚠️ API Key 也可以放到环境变量 QWEATHER_KEY 里，那样这个文件就不用写 key。
+#    ⚠️️ 这两个值**绝对不要填在这里**。本仓库是公开的（Kindle 没法带 token 认证，
+#    只能走公开地址），填进来等于把钥匙贴在全世界都能看的门上 —— 别人拿你的 Key
+#    刷接口，超了配额算在你账号上。
+#
+#    正确的放法是 GitHub Secrets（免费、不公开）：
+#      仓库 → Settings → Secrets and variables → Actions →
+#      New repository secret，建两条：
+#        QWEATHER_HOST   =  控制台给你的专属 Host，形如 abcdef.re.qweatherapi.com
+#        QWEATHER_KEY    =  那串 32 位 Key
+#      Actions 会把它们注入成环境变量，`sources._qweather_creds()` 自动读。
+#      本机临时验证：在同一个命令行里带上下划线变量再跑 generate.py 即可。
+#
+#    和风开通步骤（免费订阅）：注册 → 控制台 → 项目管理 → 创建项目（Web API）
+#      → 凭据里就能同时看到 API Host 和 Key。
+#      ⚠️ 旧域名 `devapi.qweather.com`（2026-01 停）、`api.qweather.com`（2026-06 停）
+#         已经不能用，网上教程几乎都是旧的，照抄一定失败 —— 必须用控制台发的那个专属 Host。
+#      ⚠️ 注册需要手机号，创建 Key 还要过**实名认证**，这一点和"不实名"的初衷冲突，
+#         是用户自己点头要的（2026-09-25），别在别的场合替他们决定。
 # -----------------------------------------------------------------------------
 weather:
   enabled: true
@@ -178,8 +187,8 @@ weather:
   show_air: true         # 空气质量
   show_warning: true     # 有气象灾害预警时，顶掉日历条上的节气进度，优先显示预警
   qweather:
-    api_host: ""         # ← 填控制台给你的专属 API Host，例如 abcdef.re.qweatherapi.com
-    api_key: ""          # ← 填 API Key；也可以改用环境变量 QWEATHER_KEY
+    api_host: ""         # ← 别填！放到 GitHub Secrets 的 QWEATHER_HOST
+    api_key: ""          # ← 别填！放到 GitHub Secrets 的 QWEATHER_KEY
 
 # -----------------------------------------------------------------------------
 # ⑦ 今日速览（**默认关闭**）

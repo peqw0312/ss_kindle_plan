@@ -340,10 +340,20 @@ def qweather_icon(text) -> str:
 
 
 def _qweather_creds(cfg) -> tuple[str, str]:
-    """返回 (host, key)。任一为空就当作没配好，调用方会走去 Open-Meteo。"""
-    host = str(cfg.get("weather.qweather.api_host", "") or "").strip()
+    """返回 (host, key)。任一为空就当作没配好，调用方会走去 Open-Meteo。
+
+    ⚠️ 这两个值**不要写进 config.yaml** —— 那个仓库是公开的，写进去等于把钥匙
+    贴在全世界都能看的门上。正路是环境变量：Actions 上由 GitHub Secrets 注入，
+    本机临时测试用 `$env:QWEATHER_KEY='...'` 带一下就行。
+    config.yaml 里那两项留着，是为了"私有部署"时方便，默认就该空着。
+    """
+    host = str(cfg.get("weather.qweather.api_host", "")
+               or os.environ.get("QWEATHER_HOST", "")).strip()
     key = str(cfg.get("weather.qweather.api_key", "")
               or os.environ.get("QWEATHER_KEY", "")).strip()
+    if str(cfg.get("weather.qweather.api_key", "") or "").strip():
+        print("[sources] ⚠️ 和风 Key 写在 config.yaml 里，而这个仓库是**公开的** —— "
+              "等于把钥匙贴在世界都能看的门上。请清空它，改用 GitHub Secrets 的 QWEATHER_KEY。")
     if host and not host.startswith(("http://", "https://")):
         host = "https://" + host
     return host.rstrip("/"), key

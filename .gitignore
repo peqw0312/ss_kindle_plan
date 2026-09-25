@@ -6,7 +6,8 @@ docs/debug.json
 .DS_Store
 __pycache__/
 *.pyc
-dashboard/config.local.yaml
+# 和风的 Key 走环境变量 / GitHub Secrets，不要写进 config.yaml（仓库是公开的）。
+# 真要在本机临时试，命令行里带 $env:QWEATHER_KEY 就行，不必留文件。
 
 # 验证过程中的临时文件
 .workbuddy/_*
