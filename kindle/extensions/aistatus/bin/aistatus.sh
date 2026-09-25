@@ -83,6 +83,13 @@ taps=0                  # 连点计数（人为唤醒连续几次就算"主动�
 last_tap_at=0           # 上一次人为唤醒的时刻
 sleep_logged=0          # 休眠实测只记头三次，第四次起只在真睡够时记一行
 suspend_bounces=0       # 连续"echo mem 秒弹回"的次数
+# 休眠质量计数，每次取图时汇总成一行写进日志后清零。
+# 为什么要有这三个数：以前只在**每个进程的头三次**记"计划 vs 实际"，于是"过去
+# 一整天到底睡没睡进去"这件事在日志里根本没有证据 —— 掉电快的时候只能猜。
+sleep_ok=0              # 睡够八成时间的次数
+sleep_ok_seconds=0      # 这些一共睡了多少秒
+sleep_short=0           # 睡进去但被提前叫醒的次数
+sleep_bounce=0          # 一秒弹回的次数
 bounce_warned=0         # 空转警告只喊一次
 
 # ---------------------------------------------------------------------------
@@ -534,6 +541,10 @@ refresh() {
         cp "$IMG" "$FALLBACK_IMAGE" 2>/dev/null
         consecutive_failures=0
         notice_shown=0
+        # 休眠质量小结。以前"到底有没有真睡进去"只有进程启动后头三次有证据，
+        # 之后一整天掉电快慢在日志里全是空白 —— 现在每次取图报一行，够查了。
+        log "这段的休眠：真睡 ${sleep_ok} 次共 ${sleep_ok_seconds}s · 提前醒 ${sleep_short} 次 · 弹回 ${sleep_bounce} 次"
+        sleep_ok=0; sleep_ok_seconds=0; sleep_short=0; sleep_bounce=0
         if is_low_battery; then
             show_low_battery_notice
             notice_shown=1
@@ -632,19 +643,39 @@ secure_sleep() {
         # 连着几次 `echo mem` 一秒就弹回 = 有东西压着不让睡。这时候继续重试就是
         # **纯空转**：CPU 满载、一度电也省不下来，比老实 sleep 还糟 ——
         # 而这正是现在实测在发生的事（计划 600s，实际睡 1s，然后立刻再试）。
-        # 所以连蹦三次就改用普通 sleep 把剩下的时间熬掉，并且只喊一次。
+        # 所以连蹦三次就改用普通 sleep 熬时间，并且只喊一次。
+        #
+        # 但**一口气熬完剩下的 600 秒是错的**：挡住休眠的东西（最常见就是插着 USB，
+        # VBUS 本身是唤醒源）往往十几秒就走了，而这段代码会全程醒着熬完，
+        # 一度电都不省 —— 实测有一次就是这样连续熬了十几个小时。
+        # 所以这里最多熬 60 秒就交回主循环，让下一轮再试一次 `echo mem`。
         if [ "$slept" -lt 5 ]; then
             suspend_bounces=$((suspend_bounces + 1))
+            sleep_bounce=$((sleep_bounce + 1))
         else
             suspend_bounces=0
+            if [ "$slept" -ge $((duration * 8 / 10)) ]; then
+                sleep_ok=$((sleep_ok + 1))
+                sleep_ok_seconds=$((sleep_ok_seconds + slept))
+                # 睡成过一次就把"只喊一次"的闸门关掉：之后要是又开始弹，日志里
+                # 还能再看见一次 —— 以前这个闸门开了就永远不再报，
+                # 于是"下午还好好的、晚上开始睡不着"这种事完全不留痕迹。
+                bounce_warned=0
+            else
+                sleep_short=$((sleep_short + 1))
+            fi
         fi
         if [ "$suspend_bounces" -ge 3 ]; then
             if [ "$bounce_warned" = "0" ]; then
                 bounce_warned=1
-                log "!! 连续 $suspend_bounces 次 suspend 立刻弹回 → 有东西拦着，改用普通 sleep 熬时间（看 system_probe.txt 里 dmesg 那段）"
+                log "!! 连续 $suspend_bounces 次 suspend 立刻弹回 → 有东西拦着（插着 USB？），改用普通 sleep 熬 60 秒后再试一次"
             fi
             elapsed=$slept
-            while [ "$elapsed" -lt "$duration" ]; do
+            # 只熬 60 秒就交回主循环 —— 下一轮会重新算时长并**再试一次 `echo mem`**。
+            # 一口气熬完 600 秒是错的：挡住休眠的东西往往十几秒就走了。
+            cap=60
+            [ "$duration" -lt "$cap" ] && cap=$duration
+            while [ "$elapsed" -lt "$cap" ]; do
                 [ -f "$STOP_FLAG" ] && return 0
                 sleep 10
                 elapsed=$((elapsed + 10))
