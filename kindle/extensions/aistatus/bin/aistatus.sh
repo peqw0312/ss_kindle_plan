@@ -958,10 +958,14 @@ main_loop() {
                 taps=$((taps + 1))
             else
                 taps=1
-                gap=0
             fi
             last_tap_at=$tap_at
-            log "人为唤醒：第 $taps/$need 下（距上次 ${gap}s）"
+            # 间隔必须照实写。以前这里把 gap 归零再打印，于是"第 1/2 下（距上次 0s）"
+            # 连着出现三行 —— 看着像计数器坏了，实际是窗口太短；而真正要看的
+            # "两下之间隔了多少秒"被那行假 0 藏掉了（2026-09-26 排查退出无效时踩的）。
+            # 第一下没有"上次"，会算出一个巨大的 epoch 差值，所以单独说"首次"。
+            if [ "$gap" -gt "$gap_max" ]; then gap_txt="首次/超窗"; else gap_txt="${gap}s"; fi
+            log "人为唤醒：第 $taps/$need 下（距上次 $gap_txt，窗口 ${gap_max}s）"
             if [ "$taps" -ge "$need" ]; then
                 taps=0
                 log "连够 $need 下 → 退出并回到桌面"
