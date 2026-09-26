@@ -42,20 +42,40 @@
   /* 定稿但还没移植的：压暗 + 虚线边，一眼看出"这张现在换不了" */
   .wall .dim img { opacity: .55; border-style: dashed; }
   .wall .dim figcaption { color: #a8a29e; }
+  .tbl { border-collapse: collapse; font: 13px/1.6 ui-monospace, Consolas, monospace; }
+  .tbl th, .tbl td { text-align: left; padding: 1px 14px 1px 0; font-weight: 400;
+                     border-bottom: 1px solid #f0efed; }
+  .tbl th { color: #a8a29e; font-size: 12px; }
 </style>
 </head>
 <body>
 <div class="screen">
-  <h1>Kindle 上现在这张 <button onclick="load(true)">立刻刷新</button></h1>
+  <h1>
+    <span id="shotTitle">Kindle 上现在这张</span>
+    <button onclick="backToLive()" id="backBtn" hidden>回到屏上真图</button>
+    <button onclick="load(true)">立刻刷新</button>
+  </h1>
   <img id="shot" alt="正在读取…">
+  <p class="k" id="previewNote" hidden>这是**预览**（墙上那张），Kindle 上还是原来的 —— 预览不会改屏，也不发布。</p>
 </div>
 
 <div class="panel">
   <div class="card">
     <div class="row"><span class="k">上次出图</span><b id="built">—</b></div>
     <div class="row"><span class="k">距今</span><span id="age">—</span></div>
+    <div class="row"><span class="k">下次上屏</span><b id="next">—</b></div>
     <div class="row"><span class="k">天气源</span><span id="src">—</span></div>
     <div class="row"><span class="k">行情源</span><span id="qsrc">—</span></div>
+  </div>
+
+  <div class="card">
+    <b>刷新排班表</b><span class="k" id="schedSrc"></span>
+    <div id="sched">正在读取…</div>
+    <p class="k" style="margin-bottom:0">
+      两个时钟分开看：<b>设备取图</b>是算得准的（下面这张表）；<b>云端出图</b>不准 ——
+      GitHub 的定时任务会攒着晚点，实测约 1～3 小时一次，所以"下次上屏"只是
+      设备来取的时刻，取到的可能是几十分钟前的图。
+    </p>
   </div>
 
   <div class="card">
@@ -73,8 +93,7 @@
     <p class="k">
       定稿记录：<a href="kept/确定.html" target="_blank">已确定的版面和图标</a>
       （C1 两态 + 信息终端 + 图标决策）。<a href="kept/图标.html" target="_blank">图标单独一页</a>。
-      —— 上面那面墙是"现在能换的"，这一页是"设计定过稿的"：信息终端还没移植成
-      可切换的版式，所以它不在墙上。
+      —— 那是设计定稿时的记录（含假数据的样子）；上面那面墙才是<b>现在真能换的</b>。
     </p>
   </div>
 
@@ -95,9 +114,99 @@ const IMG = `https://${OWNER}.github.io/${REPO}/dashboard.png`;
 
 // 图片每 60 秒换一次。必须带一次性参数：Pages 边缘缓存约 10 分钟，
 // 不加的话这里看到的会比 Kindle 实际拿到的更旧，反而误导。
+// previewing 为真时**不要**去覆盖 #shot —— 否则用户点开的预览会被自动刷新打回去，
+// 看起来就像"点了没反应"。
+let previewing = false;
+
 async function loadImage() {
+  if (previewing) return;
   document.getElementById('shot').src = `${IMG}?t=${Date.now()}`;
 }
+
+// 点皮肤 = 应用预览：只换这一页顶部那张大图，不写 GitHub、不改屏。
+// 之所以要这么直白地说，是因为"点了没上屏"是这里最容易误会的一件事。
+function previewSkin(name, label) {
+  previewing = true;
+  document.getElementById('shot').src = `skins/${name}.png?t=${Date.now()}`;
+  document.getElementById('shotTitle').textContent = `预览：${label}`;
+  document.getElementById('previewNote').hidden = false;
+  document.getElementById('backBtn').hidden = false;
+}
+
+function backToLive() {
+  previewing = false;
+  document.getElementById('shotTitle').textContent = 'Kindle 上现在这张';
+  document.getElementById('previewNote').hidden = true;
+  document.getElementById('backBtn').hidden = true;
+  loadImage();
+}
+
+// ---- 刷新排班表 -----------------------------------------------------------
+// 参数从设备那份 config.sh 现读，不在这里抄第二份 —— 抄一份就会在改了设备
+// 之后继续显示旧时刻表。算法照 aistatus.sh 的 minutes_until_next_fetch() 抄，
+// 包括"安静期跨过午夜"那种写法。
+const SCHED_URL = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main`
+                + `/kindle/extensions/aistatus/config.sh`;
+let S = null;
+
+function quietHour(h) {
+  const s = S.qStart, e = S.qEnd;
+  if (s === null || e === null) return false;
+  return s < e ? (h >= s && h < e) : (h >= s || h < e);
+}
+
+function nextSlots(n) {
+  const now = new Date();
+  const curH = now.getHours(), curM = now.getMinutes();
+  let h = curM >= S.align ? curH + 1 : curH;
+  while (h % S.every !== 0) h += 1;
+  const out = [];
+  for (let guard = 0; out.length < n && guard < 60; guard++) {
+    if (!quietHour(h % 24)) {
+      const when = new Date(now);
+      when.setHours(0, S.align, 0, 0);
+      when.setDate(when.getDate() + Math.floor(h / 24));
+      when.setHours(h % 24);
+      out.push(when);
+    }
+    h += S.every;
+  }
+  return out;
+}
+
+async function loadSchedule() {
+  const box = document.getElementById('sched');
+  try {
+    const r = await fetch(SCHED_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error(String(r.status));
+    const t = await r.text();
+    const num = (k, dft) => {
+      const m = t.match(new RegExp('^' + k + '=(\\d+)', 'm'));
+      return m ? parseInt(m[1], 10) : dft;
+    };
+    S = { every: num('FETCH_EVERY_HOURS', 1), align: num('FETCH_ALIGN_MINUTE', 10),
+          qStart: num('QUIET_START', null), qEnd: num('QUIET_END', null) };
+    document.getElementById('schedSrc').textContent =
+      `（读自设备配置：每 ${S.every} 小时、第 ${S.align} 分；`
+      + `${S.qStart}–${S.qEnd} 点不联网）`;
+    const now = new Date();
+    const rows = nextSlots(8).map((d, i) => {
+      const mins = Math.round((d - now) / 60000);
+      const day = d.getDate() !== now.getDate() ? `次日 ` : '';
+      const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      return `<tr><td>${day}${hhmm}</td><td>${mins} 分钟后</td>`
+           + `<td>${i === 0 ? '← 就是这一班取到云端最新那张' : ''}</td></tr>`;
+    }).join('');
+    box.innerHTML = `<table class="tbl"><tr><th>设备来取</th><th>距今</th><th></th></tr>${rows}</table>`;
+    const first = nextSlots(1)[0];
+    document.getElementById('next').textContent =
+      first ? `${String(first.getHours()).padStart(2, '0')}:${String(first.getMinutes()).padStart(2, '0')}`
+            : '—';
+  } catch (e) {
+    box.textContent = '读不到设备配置（' + e.message + '），时刻表先不显示';
+  }
+}
+
 
 async function load(showLog) {
   await loadImage();
@@ -161,26 +270,26 @@ async function loadWall() {
     if (!r.ok) throw new Error(String(r.status));
     const m = await r.json();
     box.textContent = '';
-    const add = (s, dim) => {
+    const add = (s) => {
       const fig = document.createElement('figure');
-      if (s.current) fig.className = 'cur'; else if (dim) fig.className = 'dim';
-      const a = document.createElement('a');
-      a.href = s.file.startsWith('kept/') ? s.file : `skins/${s.file}`;
-      a.target = '_blank';
+      if (s.current) fig.className = 'cur';
       const img = document.createElement('img');
       img.loading = 'lazy';
       img.alt = s.name;
-      img.src = (s.file.startsWith('kept/') ? s.file : `skins/${s.file}`)
-              + `?t=${Math.floor(Date.now() / 60000)}`;
+      img.title = '点一下 = 在上方预览（不改屏、不发布）';
+      img.src = `skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
+      img.onclick = () => previewSkin(s.name, s.label || s.name);
       const cap = document.createElement('figcaption');
-      cap.textContent = (s.label || s.name) + (s.current ? ' · 现在' : '')
-                      + (s.error ? ' · 出图失败' : '');
-      a.appendChild(img);
-      fig.append(a, cap);
+      cap.textContent = (s.label || s.name) + (s.current ? ' · 现在' : '');
+      const zoom = document.createElement('a');
+      zoom.href = `skins/${s.file}`;
+      zoom.target = '_blank';
+      zoom.textContent = ' 原图';
+      cap.appendChild(zoom);
+      fig.append(img, cap);
       box.appendChild(fig);
     };
-    for (const s of (m.skins || [])) add(s, false);
-    for (const s of (m.records || [])) add(s, true);
+    for (const s of (m.skins || [])) add(s);
   } catch (e) {
     box.textContent = '还没有皮肤墙（云端那一步没跑，或者 screen 分支上还没发布 skins/）';
   }
@@ -191,9 +300,11 @@ document.getElementById('note').textContent =
   "「距今」超过 4 小时才算真卡住。";
 load();
 loadWall();
+loadSchedule();
 setInterval(loadImage, 60000);
 setInterval(load, 180000);
 setInterval(loadWall, 1800000);
+setInterval(loadSchedule, 600000);
 </script>
 </body>
 </html>

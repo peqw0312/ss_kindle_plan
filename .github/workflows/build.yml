@@ -34,8 +34,6 @@ on:
           - 不改（用 config.yaml 里的）
           - c1
           - arc
-          - poster
-          - bands
         default: 不改（用 config.yaml 里的）
 
 # 同一时间只跑一个：上一轮还没提交完，下一轮不要插进来
@@ -108,7 +106,7 @@ jobs:
             # 的话换皮肤就只能管一次，下一轮又变回去。而把选择写回 config.yaml
             # 会再触发一轮 CI（paths 里就有 dashboard/**），自己追自己；screen 是
             # 产物分支，往它写东西没有这个问题。
-            SKIN_LIST="c1 arc poster bands"
+            SKIN_LIST="c1 arc"
             case "$SKIN" in
               # 下拉里选「不改」= 明确要把记住的那套清掉，回到配置文件。
               不改*) SKIN="" ;;

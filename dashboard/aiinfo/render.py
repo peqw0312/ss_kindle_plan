@@ -243,9 +243,11 @@ def wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int,
 
 class Renderer:
     #: 有哪些版式，以及给人看的名字。皮肤墙、云端下拉、报错提示都以这里为准。
-    LAYOUTS = ("bands", "poster", "c1", "arc")
-    LAYOUT_LABELS = {"bands": "条带（最早那版）", "poster": "帖（居中宋体大字）",
-                     "c1": "带（四条分带 + 大图标预报）",
+    #: 条带（bands）和帖（poster）2026-09-26 从可切换里摘掉了 —— 屏上只有
+    #: 两套在用：带（c1）和信息终端（arc）。绘制代码暂时留着（layout_check 和
+    #: 一些工具还引用它们），要彻底删是另一次改动。
+    LAYOUTS = ("c1", "arc")
+    LAYOUT_LABELS = {"c1": "带（四条分带 + 大图标预报）",
                      "arc": "信息终端（工业军规 · 线稿图标）"}
 
     def __init__(self, cfg, data: dict):
@@ -268,11 +270,11 @@ class Renderer:
         # 它取，别再在第二处抄一遍名单 —— 抄两遍迟早对不上。
         # （唯一抄第二遍的地方：build.yml 里 workflow_dispatch 的 options，那是
         #  GitHub 要求写死的静态列表，加版式时记得同步。）
-        self.layout = str(cfg.get("style.layout", "bands") or "bands").lower()
+        self.layout = str(cfg.get("style.layout", "c1") or "c1").lower()
         if self.layout not in self.LAYOUTS:
-            self._notes.append(f"style.layout「{self.layout}」不存在，已退回 bands。"
-                               f"可选：{' / '.join(self.LAYOUTS)}")
-            self.layout = "bands"
+            self._notes.append(f"style.layout「{self.layout}」不在可切换列表里，"
+                               f"已退回「{self.LAYOUTS[0]}」。可选：{' / '.join(self.LAYOUTS)}")
+            self.layout = self.LAYOUTS[0]
 
         # 带点号的键是配置覆盖（device.margin、weather.days 这种）。
         # cfg 在多个请求之间共用同一个对象，直接改会把这一版的设置漏给别的请求，
