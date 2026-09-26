@@ -79,7 +79,19 @@ jobs:
         # 用 pipefail 是因为 `| tee` 会把 python 的退出码吃掉 —— 不加的话
         # 出图失败也会被当成成功，然后拿一张旧图继续挂上去，比报错更糟。
         shell: bash
-        run: set -o pipefail && python dashboard/generate.py --config dashboard/config.yaml 2>&1 | tee "$RUNNER_TEMP/build.log"
+        run: |
+          set -o pipefail
+          # 整块一起 tee：分开写的话凭据那几行只进 Actions 日志（要登录才能看），
+          # 而我们要的是它出现在随图发布的 build.log 里。
+          # pipefail 保证 python 失败时整个步骤仍然算失败 —— 否则 tee 会把退出码吃掉，
+          # 出图失败会被当成成功，然后 screen 上一直挂着旧图没人发现。
+          {
+            # 只报"有没有传进来"，永远不打印内容：这份日志是公开的。
+            for v in QWEATHER_HOST QWEATHER_ISS QWEATHER_SUB QWEATHER_KID QWEATHER_PRIVATE_KEY; do
+              if [ -n "${!v}" ]; then echo "[凭据] ✓ $v 已注入"; else echo "[凭据] ✗ $v 没传进来"; fi
+            done
+            python dashboard/generate.py --config dashboard/config.yaml
+          } 2>&1 | tee "$RUNNER_TEMP/build.log"
 
       # 生成物放一个**专用分支 screen**，每次覆盖 —— 主分支的历史不会因为出图而变长。
       # 另一条路是"每月删一次历史"，但删完 GitHub 不一定立刻回收那些对象，
