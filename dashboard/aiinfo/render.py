@@ -1387,9 +1387,13 @@ class Renderer:
     PG = dict(d1=18, d2=10, d3=10, d4=0, d5=20, d6=12, d7=16, d8=18, d9=16)
 
     # 「带」版式（style.layout: c1）定稿参数，按 1072 宽设计、px() 缩放。
-    # 行盒一律 8 的倍数（40/48/56 ≈ 字号×1.5），间距三档：组内 gi < 块间 gb < 带间 gband。
+    # 行盒 = 字号×1.5 取整到 8（_c1_box），间距三档：组内 gi < 块间 gb < 带间 gband。
+    # fs 是字号档：整体放大/缩小只改这里（见 .workbuddy/_directions/字号三档.html）。
     C1 = dict(margin=64, day=240, temp=136, icon=104, fc_icon=96,
-              gi=8, gb=20, gband=28)
+              gi=8, gb=20, gband=28,
+              fs=dict(kick=24, meta=26, lunar=32, fest=32, note=28, desc=32,
+                      cell=24, cellv=26, warn=28, fc=28,
+                      m_name=26, m_price=36, m_pct=26))
 
     def fd(self, size: float):
         """显示字（宋体）。没有宋体的环境自动是粗体黑，几何不变。"""
@@ -1740,21 +1744,32 @@ class Renderer:
 
     def _c1_kicker(self, x: int, y: int, s: str, gi: int) -> int:
         """字距拉开的小标签（编辑排印的 kicker 血统）。返回下一行起点。"""
-        f = self.f(24)
+        f = self.f(self.C1["fs"]["kick"])
         cx = x
         for ch in s:
             self.text((cx, y), ch, f, GRAY)
             cx += self.tw(ch, f) + self.px(6)
         return y + self.px(32) + gi
 
-    def _c1_body(self, y: int, cal, weather, quotes, funds, extra: int = 0) -> int:
+    @staticmethod
+    def _c1_box(fs_size: int) -> int:
+        """文字行盒 = 字号×1.5 再取整到 8（基准网格）。"""
+        return (int(fs_size * 1.5) + 4) // 8 * 8
+
+    def _c1_body(self, y: int, cal, weather, quotes, funds, extra: int = 0,
+                 plan: dict | None = None) -> int:
         px = self.px
         P = self.C1
+        fs = P["fs"]
+        plan = plan or {}
         gi, gb, gband = px(P["gi"]), px(P["gb"]), px(P["gband"])
         M, X1 = px(P["margin"]), self.w - px(P["margin"])
         CW = X1 - M
         e = self._spread(extra, 3)
         weather = weather or {}
+
+        def box(key: str) -> int:
+            return px(self._c1_box(fs[key]))
 
         # -- 带一：日期（左）+ 历法/节日（右）
         meta = " · ".join(t for t in (f"{cal.solar_year} 年 {cal.solar_month} 月",
@@ -1764,9 +1779,10 @@ class Renderer:
                                             cal.ganzhi_year,
                                             f"{cal.shengxiao}年") if t)
         fest = list(cal.festivals or ())[:1]
-        notes = [t for t in (cal.statutory_countdown, cal.tiaoxiu) if t]
-        rh = px(40) + px(48) + 2 * gi + (px(48) + gi if fest else 0) \
-            + (px(40) + gi) * len(notes)
+        notes = [t for t in (cal.statutory_countdown if plan.get("countdown", True) else "",
+                             cal.tiaoxiu if plan.get("tiaoxiu", True) else "") if t]
+        rh = box("meta") + box("lunar") + 2 * gi \
+            + (box("fest") + gi if fest else 0) + (box("note") + gi) * len(notes)
         band1 = max(px(P["day"]), rh - gi)
         day_f = self.fd(P["day"])
         self._big_num(M, y, y + px(P["day"]), str(cal.solar_day), day_f)
@@ -1775,17 +1791,20 @@ class Renderer:
         self.d.rectangle([M + dw + px(20), y, M + dw + px(21), y + band1 - 1],
                          fill=GRAY_LIGHT)
         ry = y
-        self._ink_lt(rx, ry, ry + px(40), meta, self.f(26), GRAY)
-        ry += px(40) + gi
-        self._ink_lt(rx, ry, ry + px(48), lunar_line, self.f(32, True), INK)
-        ry += px(48) + gi
+        self._ink_lt(rx, ry, ry + box("meta"), meta, self.f(fs["meta"]), GRAY)
+        ry += box("meta") + gi
+        self._ink_lt(rx, ry, ry + box("lunar"), lunar_line,
+                     self.f(fs["lunar"], True), INK)
+        ry += box("lunar") + gi
         for name in fest:
-            self.d.rectangle([rx, ry + px(18), rx + px(13), ry + px(31)], fill=INK)
-            self._ink_lt(rx + px(24), ry, ry + px(48), name, self.f(32, True), INK)
-            ry += px(48) + gi
+            my = ry + box("fest") // 2
+            self.d.rectangle([rx, my - px(7), rx + px(13), my + px(6)], fill=INK)
+            self._ink_lt(rx + px(24), ry, ry + box("fest"), name,
+                         self.f(fs["fest"], True), INK)
+            ry += box("fest") + gi
         for line in notes:
-            self._ink_lt(rx, ry, ry + px(40), line, self.f(28), INK)
-            ry += px(40) + gi
+            self._ink_lt(rx, ry, ry + box("note"), line, self.f(fs["note"]), INK)
+            ry += box("note") + gi
         y += band1 + gband // 2
         self.rule(y, thickness=max(1, px(2)), color=INK, x0=M, x1=X1)
         y += gband // 2 + e[0]
@@ -1798,35 +1817,39 @@ class Renderer:
         tx = M + icon_sz + px(24)
         temp = f"{weather.get('temp')}°" if weather.get("temp") not in (None, "") else "--"
         tx += self._big_num(tx, y, y + temp_sz, temp, self.fd(P["temp"])) + px(24)
-        self._ink_lt(tx, y + temp_sz * 0.42, y + temp_sz * 0.42 + px(48),
-                     clean_text(weather.get("desc", ""), 12), self.f(32), INK)
+        show_cells = plan.get("cells", True)
         cx0 = M + px(600)
         pitch = (X1 - cx0) // 2
-        gh = 3 * px(40) + 2 * gi
-        zone = max(temp_sz, gh)
+        self._ink_lt(tx, y + temp_sz * 0.42, y + temp_sz * 0.42 + box("desc"),
+                     self.clip_text(clean_text(weather.get("desc", ""), 12),
+                                    self.f(fs["desc"]), max(px(60), cx0 - px(24) - tx)),
+                     self.f(fs["desc"]), INK)
+        gh = 3 * box("cell") + 2 * gi
+        zone = max(temp_sz, gh) if show_cells else temp_sz
         gy0 = y + (zone - gh) // 2
-        self.d.rectangle([cx0 - px(28), y, cx0 - px(27), y + zone - 1], fill=GRAY_LIGHT)
-        lf, vf = self.f(24), self.f(26)
-        for i, (label, value, sub) in enumerate(self.weather_grid(weather)[:6]):
-            gx = cx0 + (i % 2) * pitch
-            gy = gy0 + (i // 2) * (px(40) + gi)
-            lw = self._ink_lt(gx, gy, gy + px(40), label, lf, GRAY)
-            v = value + (f" {sub}" if sub else "")
-            self._ink_lt(gx + lw + px(10), gy, gy + px(40),
-                         self.clip_text(v, vf, X1 - gx - lw - px(10)), vf, INK)
+        if show_cells:
+            self.d.rectangle([cx0 - px(28), y, cx0 - px(27), y + zone - 1],
+                             fill=GRAY_LIGHT)
+            lf = self.f(fs["cell"])
+            for i, (label, value, sub) in enumerate(self.weather_grid(weather)[:6]):
+                gx = cx0 + (i % 2) * pitch
+                gy = gy0 + (i // 2) * (box("cell") + gi)
+                lw = self._ink_lt(gx, gy, gy + box("cell"), label, lf, GRAY)
+                v = value + (f" {sub}" if sub else "")
+                # 字号档放大后「空气 中度 154」这种最宽格会顶到邻列：数值按需缩一号
+                vf = self._fit_font(v, fs["cellv"], pitch - lw - px(14),
+                                    floor=int(fs["cellv"] * 0.8))
+                self._ink_lt(gx + lw + px(10), gy, gy + box("cell"),
+                             self.clip_text(v, vf, pitch - lw - px(10)), vf, INK)
         y += zone + gi
-        wf = self.f(28)
-        # warning 是**字典列表**（{title, level, text}），不是字符串 —— 直接把它
-        # 喂给 clip_text 会抛 TypeError，而这一天恰好有气象预警时才会炸，
-        # 于是 Actions 出图失败、屏幕悄悄停在昨天的图上。别再用 t 本身。
-        for w in self.weather_warning()[:2]:
-            title = clean_text(w.get("title", ""), 20)
-            if not title:
-                continue
-            self.d.rectangle([M, y + px(14), M + px(12), y + px(26)], fill=INK)
-            self._ink_lt(M + px(24), y, y + px(40),
-                         self.clip_text(title, wf, X1 - M - px(24)), wf, INK)
-            y += px(40) + gi
+        wf = self.f(fs["warn"])
+        wbox = box("warn")
+        for t in self.weather_warning()[:2 if plan.get("warn2", True) else 1]:
+            self.d.rectangle([M, y + wbox // 2 - px(6), M + px(12),
+                              y + wbox // 2 + px(6)], fill=INK)
+            self._ink_lt(M + px(24), y, y + wbox,
+                         self.clip_text(t, wf, X1 - M - px(24)), wf, INK)
+            y += wbox + gi
         y += gb - gi + gband // 2
         self.rule(y, thickness=max(1, px(2)), color=INK, x0=M, x1=X1)
         y += gband // 2 + e[1]
@@ -1834,49 +1857,58 @@ class Renderer:
         # -- 带三：预报四联，大图标（云体对齐）
         y = self._c1_kicker(M, y, "预报 FORECAST", gi)
         cw4 = CW // 4
-        ff = self.f(28)
+        ff = self.f(fs["fc"])
+        fb = box("fc")
         fc_sz = px(P["fc_icon"])
+        show_desc = plan.get("fc_desc", True)
         for i, day in enumerate((weather.get("forecast") or [])[:4]):
             gx = M + i * cw4 + cw4 // 2
             today = i == 0
             self.icon(gx, y + fc_sz // 2, fc_sz, day.get("icon", "cloud"),
                       fill=INK if today else INK_SOFT, align_cloud=True)
             ly = y + fc_sz + px(8)
-            self.text_centered_ink(gx, ly, ly + px(40), day.get("label", ""),
-                                   self.f(28, today), INK if today else GRAY,
+            self.text_centered_ink(gx, ly, ly + fb, day.get("label", ""),
+                                   self.f(fs["fc"], today), INK if today else GRAY,
                                    strong=False)
-            self.text_centered_ink(gx, ly + px(40) + gi, ly + px(80) + gi,
-                                   self.clip_text(clean_text(day.get("desc", ""), 6),
-                                                  ff, cw4 - px(12)), ff, INK,
-                                   strong=False)
-            self.text_centered_ink(gx, ly + px(80) + 2 * gi, ly + px(120) + 2 * gi,
+            hy = ly + fb + gi
+            if show_desc:
+                self.text_centered_ink(gx, hy, hy + fb,
+                                       self.clip_text(clean_text(day.get("desc", ""), 6),
+                                                      ff, cw4 - px(12)), ff, INK,
+                                       strong=False)
+                hy += fb + gi
+            self.text_centered_ink(gx, hy, hy + fb,
                                    f"{day.get('high')}° / {day.get('low')}°", ff, GRAY,
                                    strong=False)
-        y += fc_sz + px(128) + 2 * gi + gb + gband // 2
+        y += fc_sz + px(8) + (3 * fb + 2 * gi if show_desc else 2 * fb + gi) \
+            + gb + gband // 2
         self.rule(y, thickness=max(1, px(2)), color=INK, x0=M, x1=X1)
         y += gband // 2 + e[2]
 
         # -- 带四：行情三栏
         y = self._c1_kicker(M, y, "行情 MARKETS", gi)
         cw3 = CW // 3
-        pf = self.f(36, True)
+        pf = self.f(fs["m_price"], True)
+        nbox, pbox = box("m_name"), box("m_price")
+        entries = (list(quotes or []) + list(funds or []))[:3 if plan.get("q3", True) else 2]
         py = y
-        for i, entry in enumerate((list(quotes or []) + list(funds or []))[:3]):
+        for i, entry in enumerate(entries):
             gx = M + i * cw3
-            py = y + px(40) + gi
+            py = y + nbox + gi
             if i:
-                self.d.rectangle([gx - px(12), y - px(8), gx - px(11), py + px(56) - 1],
+                self.d.rectangle([gx - px(12), y - px(8), gx - px(11), py + pbox - 1],
                                  fill=GRAY_LIGHT)
-            self._ink_lt(gx, y, y + px(40),
+            self._ink_lt(gx, y, y + nbox,
                          self.clip_text(clean_text(entry.get("name", ""), 12),
-                                        self.f(26), cw3 - px(16)), self.f(26), GRAY)
+                                        self.f(fs["m_name"]), cw3 - px(16)),
+                         self.f(fs["m_name"]), GRAY)
             price = self._fmt_price(entry.get("price"), entry.get("is_fund"),
                                     entry.get("is_crypto"))
-            self._ink_lt(gx, py, py + px(56), price, pf, INK)
+            self._ink_lt(gx, py, py + pbox, price, pf, INK)
             pct = entry.get("pct")
             txt = "--" if pct is None else f"{pct:+.2f}%"
             pw = self.tw(price, pf)
-            sy = py + px(22)
+            sy = py + pbox // 2 - px(6)
             if pct is None:
                 pass
             elif pct >= 0:
@@ -1885,18 +1917,38 @@ class Renderer:
             else:
                 self.d.rectangle([gx + pw + px(14), sy, gx + pw + px(26), sy + px(12)],
                                  outline=GRAY, width=max(1, px(2)))
-            self._ink_lt(gx + pw + px(34), py + px(8), py + px(48), txt, self.f(26), INK)
-        return py + px(56)
+            self._ink_lt(gx + pw + px(34), py + (pbox - box("m_pct")) // 2,
+                         py + (pbox + box("m_pct")) // 2, txt, self.f(fs["m_pct"]), INK)
+        return py + pbox
 
-    def _c1_body_height(self, cal, weather, quotes, funds) -> int:
+    def _c1_body_height(self, cal, weather, quotes, funds, plan=None) -> int:
         """在 8×8 草稿上空画一遍量高度（同 _poster_body_height 的换画布手法）。"""
         saved = (self.img, self.d)
         scratch = Image.new("L", (8, 8), 255)
         self.img, self.d = scratch, ImageDraw.Draw(scratch)
         try:
-            return self._c1_body(0, cal, weather, quotes, funds)
+            return self._c1_body(0, cal, weather, quotes, funds, plan=plan)
         finally:
             self.img, self.d = saved
+
+    #: 内容太长时的收行阶梯，按简报的截断优先级一级一级让位：
+    #: 调休 → 倒计时 → 第二条预警 → 数据格 → 预报天气词 → 第三个指数。
+    #: 主日期 / 气温 / 当天节日永远不删。
+    _C1_PLANS = [
+        {},
+        {"tiaoxiu": False},
+        {"tiaoxiu": False, "countdown": False},
+        {"tiaoxiu": False, "countdown": False, "warn2": False},
+        {"tiaoxiu": False, "countdown": False, "warn2": False, "cells": False},
+        {"tiaoxiu": False, "countdown": False, "warn2": False, "cells": False,
+         "fc_desc": False},
+        {"tiaoxiu": False, "countdown": False, "warn2": False, "cells": False,
+         "fc_desc": False, "q3": False},
+    ]
+
+    _C1_DROPPED_LABELS = {"tiaoxiu": "调休行", "countdown": "倒计时行",
+                          "warn2": "第二条预警", "cells": "数据格",
+                          "fc_desc": "预报天气词", "q3": "第三个指数"}
 
     def _render_c1(self, weather, quotes, funds, cal) -> None:
         px = self.px
@@ -1905,18 +1957,27 @@ class Renderer:
         # 电量精灵图占右上角 (814,40)-(1016,96)：正文从它下沿再留 16 起画，
         # 否则第一带的 meta 行会伸进精灵图矩形里。
         top = px(POSTER_BATTERY[3]) + px(16)
-        extra = (foot_top - px(80)) - top - self._c1_body_height(cal, weather, quotes, funds)
+        budget = (foot_top - px(80)) - top
+        plan = self._C1_PLANS[-1]
+        for cand in self._C1_PLANS:
+            if budget - self._c1_body_height(cal, weather, quotes, funds, cand) >= px(40):
+                plan = cand
+                break
+        extra = budget - self._c1_body_height(cal, weather, quotes, funds, plan)
         self.slack = int(extra)
         if self.slack < px(40):
-            self._notes.append(f"「带」版余量只有 {self.slack}px（安全线 40）："
-                               f"内容比设计稿长，先关一块或调小 C1 参数")
+            self._notes.append(f"「带」版收行到最后仍只有 {self.slack}px 余量："
+                               f"内容比设计稿长，调小 C1 字号档")
+        if plan:
+            self._notes.append("「带」版内容偏长，已按优先级收起："
+                               + "、".join(self._C1_DROPPED_LABELS[k]
+                                           for k, v in plan.items() if v is False))
         self.block_boxes = {}
-        y = self._c1_body(top, cal, weather, quotes, funds, extra)
+        y = self._c1_body(top, cal, weather, quotes, funds, extra, plan)
         self.block_boxes["calendar"] = (M, top, X1, y)
         if not any((weather, quotes, funds)):
             self._draw_empty_notice(y)
         self._poster_footer(foot_top, M, X1)
-
     # =====================================================================
     #  主流程
     # =====================================================================
