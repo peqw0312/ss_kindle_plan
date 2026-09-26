@@ -143,12 +143,12 @@ WMO_CODES: dict[int, tuple[str, str]] = {
     3: ("阴", "cloud"),
     45: ("有雾", "fog"),
     48: ("冻雾", "fog"),
-    51: ("毛毛雨", "rain"),
-    53: ("毛毛雨", "rain"),
-    55: ("强毛毛雨", "rain"),
-    56: ("冻毛毛雨", "rain"),
-    57: ("强冻毛毛雨", "rain"),
-    61: ("小雨", "rain"),
+    51: ("毛毛雨", "drizzle"),
+    53: ("毛毛雨", "drizzle"),
+    55: ("强毛毛雨", "drizzle"),
+    56: ("冻毛毛雨", "drizzle"),
+    57: ("强冻毛毛雨", "drizzle"),
+    61: ("小雨", "rain_light"),
     63: ("中雨", "rain"),
     65: ("大雨", "rain_heavy"),
     66: ("冻雨", "rain_heavy"),
@@ -157,7 +157,7 @@ WMO_CODES: dict[int, tuple[str, str]] = {
     73: ("中雪", "snow"),
     75: ("大雪", "snow"),
     77: ("雪粒", "snow"),
-    80: ("小阵雨", "rain"),
+    80: ("小阵雨", "rain_light"),
     81: ("阵雨", "rain"),
     82: ("强阵雨", "rain_heavy"),
     85: ("小阵雪", "snow"),
@@ -380,9 +380,20 @@ def fetch_air_quality(lat, lon, tz: str) -> dict | None:
 
 #: 天气现象文本 -> 图标类别。顺序有意义：先判「雷」「雪」再判「雨」，
 #: 否则「雷阵雨」会被划成雨、「雨夹雪」会被划成雨。
+#: 雨这一档再按强度细分：滴数就是强度（小雨 1 滴 / 中雨 2 滴 / 大雨 3 滴 /
+#: 暴雨 3 大滴），所以「大暴雨」必须排在「暴雨」和「大雨」前面。
 QWEATHER_ICONS: tuple[tuple[str, str], ...] = (
     ("雷", "thunder"),
     ("雪", "snow"),
+    ("特大暴雨", "rain_storm"),
+    ("大暴雨", "rain_storm"),
+    ("暴雨", "rain_storm"),
+    ("大雨", "rain_heavy"),
+    ("强阵雨", "rain_heavy"),
+    ("中雨", "rain"),
+    ("阵雨", "rain"),
+    ("小雨", "rain_light"),
+    ("毛毛雨", "drizzle"),
     ("雨", "rain"),
     ("雾", "fog"),
     ("霾", "fog"),

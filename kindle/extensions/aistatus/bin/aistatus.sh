@@ -966,7 +966,9 @@ main_loop() {
             # 第一下没有"上次"，会算出一个巨大的 epoch 差值，所以单独说"首次"。
             if [ "$gap" -gt "$gap_max" ]; then gap_txt="首次/超窗"; else gap_txt="${gap}s"; fi
             log "人为唤醒：第 $taps/$need 下（距上次 $gap_txt，窗口 ${gap_max}s）"
-            if [ "$taps" -ge "$need" ]; then
+            # need=0 是"关掉连点退出"（2026-09-26）。必须挡在前面：
+            # 少了这个 -ge 1，`taps(=1) -ge 0` 恒真，第一下就直接退出了。
+            if [ "$need" -ge 1 ] && [ "$taps" -ge "$need" ]; then
                 taps=0
                 log "连够 $need 下 → 退出并回到桌面"
                 cleanup "连点 ${need} 下（用户主动退出）"

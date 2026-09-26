@@ -32,6 +32,7 @@ INK = 0
 INK_SOFT = 70
 GRAY = 130
 GRAY_LIGHT = 195
+PAPER = 255
 
 # 基准字号（按 1072px 宽设计，其他机型按比例缩放）
 #
@@ -241,6 +242,11 @@ def wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int,
 
 
 class Renderer:
+    #: 有哪些版式，以及给人看的名字。皮肤墙、云端下拉、报错提示都以这里为准。
+    LAYOUTS = ("bands", "poster", "c1")
+    LAYOUT_LABELS = {"bands": "条带（最早那版）", "poster": "帖（居中宋体大字）",
+                     "c1": "带（四条分带 + 大图标预报）"}
+
     def __init__(self, cfg, data: dict):
         self.data = data or {}
         self._notes: list[str] = []
@@ -257,13 +263,14 @@ class Renderer:
         for name, base in _BASE_SIZES.items():
             setattr(self, name, chosen.get(name, base))
 
-        # 版式引擎：bands = 一直在线的条带版；poster = 「帖」（居中宋体大字）；
-        # c1 = 「带」（四条分带 + 大图标预报，2026-09 定稿）。
-        # 预设里的字号只对 bands 有意义，poster / c1 用自己的参数。
+        # 版式引擎的清单只有一个来源：下面这个类属性。皮肤墙和云端那个下拉都从
+        # 它取，别再在第二处抄一遍名单 —— 抄两遍迟早对不上。
+        # （唯一抄第二遍的地方：build.yml 里 workflow_dispatch 的 options，那是
+        #  GitHub 要求写死的静态列表，加版式时记得同步。）
         self.layout = str(cfg.get("style.layout", "bands") or "bands").lower()
-        if self.layout not in ("bands", "poster", "c1"):
+        if self.layout not in self.LAYOUTS:
             self._notes.append(f"style.layout「{self.layout}」不存在，已退回 bands。"
-                               f"可选：bands / poster / c1")
+                               f"可选：{' / '.join(self.LAYOUTS)}")
             self.layout = "bands"
 
         # 带点号的键是配置覆盖（device.margin、weather.days 这种）。
@@ -501,6 +508,20 @@ class Renderer:
     ICON_DROP_Y0 = 0.44          # 降水符号起点，单位 = R（相对图标中心）
     ICON_DROP_SPAN = 0.62        # 三个雨滴的横向排布宽，单位 = R
 
+    #: 滴数本身就是强度。以前小/中/大雨都画三滴、只改粗细，挂墙上远看
+    #: 中雨和暴雨一个样 —— 而"要不要带伞"恰恰是这一格要回答的问题。
+    #: 暴雨不靠把滴画大来表达（放大后反而糊成一坨），而是数到第四滴。
+    RAIN_KINDS = ("drizzle", "rain_light", "rain", "shower", "rain_heavy",
+                  "rain_storm")
+    ICON_DROPS = {"drizzle": 1, "rain_light": 1, "rain": 2, "shower": 3,
+                  "rain_heavy": 3, "rain_storm": 4}
+    ICON_DROP_OFF = {1: (0.0,), 2: (-0.19, 0.19), 3: (-0.31, 0.0, 0.31),
+                     4: (-0.48, -0.16, 0.16, 0.48)}
+    ICON_DROP_LONG = {"drizzle": 0.22, "rain_light": 0.30, "rain": 0.34,
+                      "shower": 0.46, "rain_heavy": 0.40, "rain_storm": 0.40}
+    ICON_DROP_K = {"drizzle": 0.70, "rain_light": 0.95, "rain": 1.0,
+                   "shower": 1.15, "rain_heavy": 1.20, "rain_storm": 1.05}
+
     def _cap_line(self, d, p0, p1, w: float, level: int) -> None:
         """Pillow 的 line 没有圆头，方头在小尺寸下显脏，两端自己补圆。"""
         d.line([p0, p1], fill=level, width=w)
@@ -508,11 +529,12 @@ class Renderer:
             d.ellipse([x - w / 2, y - w / 2, x + w / 2, y + w / 2], fill=level)
 
     def _stamp_solid(self, cx: float, cy: float, size: float, sil,
-                     level: int) -> None:
+                     level: int, bg: int = PAPER) -> None:
         """把剪影整块填成一个色阶贴回主图。sil(dd, side) 在掩膜上画 255。
 
-        先贴一圈白（把云剪影向外胀一道），再贴云体：躲在云后面的太阳/月亮
-        会被切出一道均匀的白缝，看着是"藏在后面"，而不是"和云粘在一起"。
+        先贴一圈底色（把云剪影向外胀一道），再贴云体：躲在云后面的太阳/月亮
+        会被切出一道均匀的底色缝，看着是"藏在后面"，而不是"和云粘在一起"。
+        bg 必须是图标所在地的底色：反相格上若还贴 255，云会镶一圈白边。
         """
         side = int(max(12, round(size * 1.7)))
         x0, y0 = int(round(cx - side / 2)), int(round(cy - side / 2))
@@ -520,7 +542,7 @@ class Renderer:
         sil(ImageDraw.Draw(mask), side)
         halo = int(round(size * self.ICON_HALO))
         if halo:
-            self.img.paste(255, (x0, y0),
+            self.img.paste(bg, (x0, y0),
                            mask.filter(ImageFilter.MaxFilter(halo * 2 + 1)))
         self.img.paste(level, (x0, y0), mask)
 
@@ -547,7 +569,8 @@ class Renderer:
             d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=255)
 
     def _cloud_stamp(self, cx: float, cy: float, size: float, dx: float,
-                     dy: float, scale: float, level: int) -> None:
+                     dy: float, scale: float, level: int,
+                     bg: int = PAPER) -> None:
         """画一朵云，云心落在 (cx + dx·R, cy + dy·R)，R = size/2。"""
         R = size / 2.0
         a = R * self.ICON_CLOUD_A * scale
@@ -557,7 +580,7 @@ class Renderer:
             # 云的视觉中心在底边上方 rmax·a 处，所以底边要往下补这一截
             self._cloud(d, a, side / 2 + dx * R,
                         side / 2 + dy * R + (rmax - 0.26) * a)
-        self._stamp_solid(cx, cy, size, sil, level)
+        self._stamp_solid(cx, cy, size, sil, level, bg)
 
     def _sun_rays(self, cx: float, cy: float, sr: float, w: float, level: int,
                   n: int, a0: float, step: float) -> None:
@@ -570,21 +593,26 @@ class Renderer:
             x, y = cx + math.cos(ang) * mid, cy + math.sin(ang) * mid
             self.d.ellipse([x - rr, y - rr, x + rr, y + rr], fill=level)
 
-    def _crescent(self, cx: float, cy: float, mr: float, level: int) -> None:
-        """实心盘再挖掉一个偏心圆，剩下的就是月牙。"""
+    def _crescent(self, cx: float, cy: float, mr: float, level: int,
+                  bg: int = PAPER) -> None:
+        """实心盘再挖掉一个偏心圆，剩下的就是月牙。挖的那刀要用底色 bg，
+        否则在黑底格上月牙会被一坨白圆咬掉。"""
         self.d.ellipse([cx - mr, cy - mr, cx + mr, cy + mr], fill=level)
         cut = mr * 0.94
         ox, oy = cx + mr * 0.52, cy - mr * 0.46
-        self.d.ellipse([ox - cut, oy - cut, ox + cut, oy + cut], fill=255)
+        self.d.ellipse([ox - cut, oy - cut, ox + cut, oy + cut], fill=bg)
 
     def _drops(self, cx: float, cy: float, R: float, w: float, level: int,
-               long: float, k: float) -> None:
-        """云底下三个水滴（上尖下圆）。k 是雨量系数：阵雨放大、小雨缩小。"""
+               kind: str) -> None:
+        """云底下的水滴，上尖下圆。滴数=强度（ICON_DROPS：1/2/3 滴，
+        暴雨是 3 大滴），滴形大小与下落长度也跟着强度走。"""
+        n = self.ICON_DROPS.get(kind, 2)
+        long = self.ICON_DROP_LONG.get(kind, 0.34)
+        k = self.ICON_DROP_K.get(kind, 1.0)
         y0 = cy + R * self.ICON_DROP_Y0
-        span = self.ICON_DROP_SPAN
-        for i in range(3):
-            x = cx + (-span / 2 + span / 2 * i) * R
-            rr = max(2.5, w * 1.05) * k
+        rr = max(2.5, w * 1.05) * k
+        for off in self.ICON_DROP_OFF[n]:
+            x = cx + off * R
             y = y0 + R * long * 0.55
             self.d.ellipse([x - rr, y - rr, x + rr, y + rr], fill=level)
             self.d.polygon([(x, y0 - R * long * 0.35), (x - rr * 0.92, y),
@@ -601,7 +629,8 @@ class Renderer:
         return kind
 
     def icon(self, cx: float, cy: float, size: float, kind: str,
-             fill: int = INK_SOFT, align_cloud: bool = False) -> None:
+             fill: int = INK_SOFT, align_cloud: bool = False,
+             bg: int = PAPER) -> None:
         """天气图标。
 
         旧版所有部件都是实心黑：云 = 三个实心椭圆 + 一个矩形，在主图里就是
@@ -618,7 +647,7 @@ class Renderer:
         R = size / 2.0
         if align_cloud:
             dy = {"sun_cloud": 0.30, "moon_cloud": 0.30, "thunder": -0.34}.get(kind)
-            if dy is None and kind in ("rain", "shower", "drizzle", "snow"):
+            if dy is None and kind in self.RAIN_KINDS + ("snow",):
                 dy = -0.30
             cy -= (dy or 0.0) * R
         aw = max(2, int(round(size * self.ICON_AUX_W)))
@@ -637,25 +666,23 @@ class Renderer:
             d.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=fill)
             self._sun_rays(sx, sy, sr, max(2, int(aw * 0.72)), fill,
                            n=5, a0=180.0, step=22.5)
-            self._cloud_stamp(cx, cy, size, 0.14, 0.30, 0.92, fill)
+            self._cloud_stamp(cx, cy, size, 0.14, 0.30, 0.92, fill, bg)
 
         elif kind == "moon":
             self._crescent(cx - R * 0.04, cy + R * 0.02,
-                           R * self.ICON_MOON_R, fill)
+                           R * self.ICON_MOON_R, fill, bg)
 
         elif kind == "moon_cloud":
             self._crescent(cx - R * 0.34, cy - R * 0.36,
-                           R * self.ICON_DISC_R * 1.02, fill)
-            self._cloud_stamp(cx, cy, size, 0.14, 0.30, 0.92, fill)
+                           R * self.ICON_DISC_R * 1.02, fill, bg)
+            self._cloud_stamp(cx, cy, size, 0.14, 0.30, 0.92, fill, bg)
 
         elif kind == "cloud":
-            self._cloud_stamp(cx, cy, size, 0.0, 0.0, 1.0, fill)
+            self._cloud_stamp(cx, cy, size, 0.0, 0.0, 1.0, fill, bg)
 
-        elif kind in ("rain", "shower", "drizzle", "snow", "thunder"):
-            long = {"shower": 0.46, "drizzle": 0.22, "rain": 0.34}.get(kind, 0.30)
-            k = {"shower": 1.30, "drizzle": 0.70}.get(kind, 1.0)
+        elif kind in self.RAIN_KINDS + ("snow", "thunder"):
             up = 0.34 if kind == "thunder" else 0.30
-            self._cloud_stamp(cx, cy, size, 0.0, -up, 0.98, fill)
+            self._cloud_stamp(cx, cy, size, 0.0, -up, 0.98, fill, bg)
             if kind == "snow":
                 rr = max(2.5, R * 0.085)
                 span = self.ICON_DROP_SPAN
@@ -673,7 +700,7 @@ class Renderer:
                            (cx + R * 0.06, by + R * 0.46),
                            (cx + R * 0.32, by + R * 0.16)], fill=fill)
             else:
-                self._drops(cx, cy - R * up * 0.55, R, aw, fill, long, k)
+                self._drops(cx, cy - R * up * 0.55, R, aw, fill, kind)
 
         else:                                                 # fog / 认不出来
             w = max(2, int(round(size * self.ICON_FOG_W)))
@@ -1930,26 +1957,6 @@ class Renderer:
                          py + (pbox + box("m_pct")) // 2, txt, self.f(fs["m_pct"]), INK)
         return py + pbox
 
-    def _c1_exit_hint(self) -> None:
-        """左上角那一枚「点两下退出」。
-
-        ⚠️ 它是**提示，不是热区**：框架停掉之后设备拿不到触摸坐标，能拿到的
-        只有"这次不是闹钟叫醒的"这一个信号（判定见
-        kindle/extensions/aistatus/bin/aistatus.sh 的连点段），所以点屏幕任何
-        位置都算一下，画在角上只是给一个"该去哪儿找出口"的落点。
-
-        位置取电量精灵图那条横带的左边 —— 那是整版唯一的死区，正文从它下沿起画。
-        """
-        _l, t, _r, b = self.battery_region()
-        f = self.f(22)
-        label = "点两下退出"
-        pad_x = self.px(16)
-        x0 = self.px(self.C1["margin"])
-        h = b - t
-        box = [x0, t, x0 + self.tw(label, f) + pad_x * 2, b]
-        self.d.rounded_rectangle(box, radius=h // 2, outline=GRAY, width=2)
-        self.text((x0 + pad_x, t + (h - self.lh(f)) // 2), label, f, GRAY)
-
     def _c1_body_height(self, cal, weather, quotes, funds, plan=None) -> int:
         """在 8×8 草稿上空画一遍量高度（同 _poster_body_height 的换画布手法）。"""
         saved = (self.img, self.d)
@@ -2001,7 +2008,6 @@ class Renderer:
             self._notes.append("「带」版内容偏长，已按优先级收起："
                                + "、".join(self._C1_DROPPED_LABELS[k]
                                            for k, v in plan.items() if v is False))
-        self._c1_exit_hint()
         self.block_boxes = {}
         y = self._c1_body(top, cal, weather, quotes, funds, extra, plan)
         self.block_boxes["calendar"] = (M, top, X1, y)
