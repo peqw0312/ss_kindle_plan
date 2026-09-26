@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>信息屏调试台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  这个页面由 build.yml 复制到 screen 分支的根目录，于是它就是 Pages 的首页：
+      https://<用户>.github.io/<仓库>/
+  为什么要它：Kindle 挂在墙上，之前每次想知道"云端到底出了什么图、为什么降级"，
+  都得把设备拔线插电脑、我再去读日志。这个页面把云端那一侧的真相直接摊开——
+  图本身、上次出图时间、用的哪个天气源、五个凭据有没有注入、完整构建日志。
+  它不需要任何服务器，就是浏览器跟 GitHub 要两个公开文件。
+-->
+<style>
+  /* 这一页从头到尾是浅色（白卡片 + 浅灰底），所以声明 color-scheme: light。
+     写 light dark 的话，深色系统下的浏览器会把 button / input 的默认字色涂成
+     白色，而我们又给它们刷了白底 —— 结果就是"立刻刷新"白底白字看不见。 */
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 20px; font: 15px/1.6 system-ui, "Segoe UI", sans-serif;
+         background: #f5f5f4; color: #1c1917; display: flex; gap: 24px; flex-wrap: wrap; }
+  h1 { font-size: 17px; margin: 0 0 12px; font-weight: 600; }
+  .screen { flex: 0 0 auto; }
+  .screen img { display: block; height: calc(100vh - 110px); max-height: 1448px;
+                border: 1px solid #d6d3d1; border-radius: 4px; background: #fff; }
+  .panel { flex: 1 1 380px; max-width: 720px; min-width: 340px; }
+  .card { background: #fff; border: 1px solid #e7e5e4; border-radius: 6px;
+          padding: 12px 14px; margin-bottom: 12px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; }
+  .k { color: #78716c; }
+  .ok  { color: #15803d; font-weight: 600; }
+  .bad { color: #b91c1c; font-weight: 600; }
+  .warn{ color: #a16207; font-weight: 600; }
+  pre { margin: 0; font: 12px/1.5 ui-monospace, Consolas, monospace;
+        white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow: auto; }
+  details summary { cursor: pointer; color: #57534e; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid #d6d3d1; border-radius: 5px;
+           background: #fff; color: #1c1917; cursor: pointer; }
+  button:disabled { color: #a8a29e; }
+  .wall { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .wall figure { margin: 0; text-align: center; }
+  .wall img { width: 118px; display: block; border: 1px solid #e7e5e4; background: #fff; }
+  .wall figcaption { font-size: 12px; color: #57534e; margin-top: 4px; }
+  .wall .cur img { outline: 3px solid #16a34a; outline-offset: -3px; }
+  .wall .cur figcaption { color: #15803d; font-weight: 600; }
+  /* 定稿但还没移植的：压暗 + 虚线边，一眼看出"这张现在换不了" */
+  .wall .dim img { opacity: .55; border-style: dashed; }
+  .wall .dim figcaption { color: #a8a29e; }
+  .tbl { border-collapse: collapse; font: 13px/1.6 ui-monospace, Consolas, monospace; }
+  .tbl th, .tbl td { text-align: left; padding: 1px 14px 1px 0; font-weight: 400;
+                     border-bottom: 1px solid #f0efed; }
+  .tbl th { color: #a8a29e; font-size: 12px; }
+  .pub { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .pub input { flex: 1 1 320px; font: 12px ui-monospace, Consolas, monospace;
+               padding: 5px 8px; border: 1px solid #d6d3d1; border-radius: 5px;
+               background: #fff; color: #1c1917; }
+  .pub input::placeholder { color: #a8a29e; }
+  .wall .pick img { outline: 3px solid #2563eb; outline-offset: -3px; }
+  .wall .pick figcaption { color: #1d4ed8; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="screen">
+  <h1>
+    <span id="shotTitle">Kindle 上现在这张</span>
+    <button onclick="backToLive()" id="backBtn" hidden>回到屏上真图</button>
+    <button onclick="manualRefresh()" id="refreshBtn">立刻刷新</button>
+  </h1>
+  <img id="shot" alt="正在读取…">
+  <p class="k" id="refreshNote"></p>
+  <p class="k" id="previewNote" hidden>这是**预览**（墙上那张），Kindle 上还是原来的 —— 预览不会改屏，也不发布。</p>
+</div>
+
+<div class="panel">
+  <div class="card">
+    <div class="row"><span class="k">上次出图</span><b id="built">—</b></div>
+    <div class="row"><span class="k">距今</span><span id="age">—</span></div>
+    <div class="row"><span class="k">下次上屏</span><b id="next">—</b></div>
+    <div class="row"><span class="k">天气源</span><span id="src">—</span></div>
+    <div class="row"><span class="k">行情源</span><span id="qsrc">—</span></div>
+  </div>
+
+  <div class="card">
+    <b>刷新排班表</b><span class="k" id="schedSrc"></span>
+    <div id="sched">正在读取…</div>
+    <p class="k" style="margin-bottom:0">
+      两个时钟分开看：<b>设备取图</b>是算得准的（下面这张表）；<b>云端出图</b>不准 ——
+      GitHub 的定时任务会攒着晚点，实测约 1～3 小时一次，所以"下次上屏"只是
+      设备来取的时刻，取到的可能是几十分钟前的图。
+    </p>
+  </div>
+
+  <div class="card">
+    <b>凭据注入</b><span class="k">（和风要这五个都在，缺一个就安静降级成 Open-Meteo）</span>
+    <div id="creds" class="k">正在读取…</div>
+  </div>
+
+  <div class="card">
+    <b>皮肤墙</b><span class="k">（同一时刻的真灰度出图；点一张 = 预览并选中，再按下面「发布」才上屏）</span>
+    <div id="wall" class="wall">正在读取…</div>
+    <p class="k" style="margin-bottom:0">
+      换皮肤：<a id="switch" href="#" target="_blank">去 Actions 点「Run workflow」选一套</a>
+      —— 选完约 1 分钟出图，Kindle 到下一个整点第 10 分才取，所以别当成没生效。
+    </p>
+    <p class="k">
+      定稿记录：<a href="kept/确定.html" target="_blank">已确定的版面和图标</a>
+      （C1 两态 + 信息终端 + 图标决策）。<a href="kept/图标.html" target="_blank">图标单独一页</a>。
+      —— 那是设计定稿时的记录（含假数据的样子）；上面那面墙才是<b>现在真能换的</b>。
+    </p>
+  </div>
+
+  <div class="card">
+    <b>发布</b><span class="k">（把选中的那套设为屏上用的；约 1 分钟出图，屏上下一个整点第 10 分取）</span>
+    <div class="pub">
+      <span>屏上现在：<b id="liveSkin">读取中…</b></span>
+      <span>准备发布：<b id="pickName">（先点上面任意一张）</b></span>
+    </div>
+    <div class="pub">
+      <input id="tok" type="password" placeholder="GitHub fine-grained token（只要本仓库 Actions: write）"
+             autocomplete="off" spellcheck="false">
+      <button id="pubBtn" onclick="publish()">发布</button>
+      <button onclick="forgetToken()">清除本机 token</button>
+    </div>
+    <p class="k" id="pubMsg"></p>
+    <p class="k">
+      token 只存在<b>这台浏览器的 localStorage</b>，由页面直接发给 GitHub 官方接口，
+      不经过任何第三方（跨域已实测允许）。换浏览器或清缓存要重填一次；
+      想反悔随时在 GitHub → Settings → Developer settings → Fine-grained tokens 撤销。
+    </p>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>完整构建日志</summary>
+      <pre id="log">（还没读到）</pre>
+    </details>
+  </div>
+
+  <p class="k" id="note"></p>
+</div>
+
+<script>
+const OWNER = "peqw0312", REPO = "ss_kindle_plan", BRANCH = "screen";
+const API = `https://api.github.com/repos/${OWNER}/${REPO}`;
+const IMG = `https://${OWNER}.github.io/${REPO}/dashboard.png`;
+
+// 图片每 60 秒换一次。必须带一次性参数：Pages 边缘缓存约 10 分钟，
+// 不加的话这里看到的会比 Kindle 实际拿到的更旧，反而误导。
+// previewing 为真时**不要**去覆盖 #shot —— 否则用户点开的预览会被自动刷新打回去，
+// 看起来就像"点了没反应"。
+let previewing = false;
+
+async function loadImage() {
+  if (previewing) return;
+  document.getElementById('shot').src = `${IMG}?t=${Date.now()}`;
+}
+
+// 「立刻刷新」必须说话。它其实一直在重新拉图，但云端没出新图时画面一模一样，
+// 于是看起来像按钮坏了 —— 一个不给反馈的按钮就等于一个坏按钮。
+// 这里改成：按下先变灰写「刷新中…」，拉完用 Last-Modified 判断到底有没有新图，
+// 并把结论写在图下面。预览态下更要吭声，因为那时 loadImage() 是故意不覆盖大图的。
+let lastModified = null;
+
+async function manualRefresh() {
+  const btn = Array.from(document.querySelectorAll('button'))
+                    .find(function (b) { return /立刻刷新/.test(b.textContent); });
+  const note = document.getElementById('refreshNote');
+  if (!btn) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '刷新中…';
+  try {
+    if (previewing) {
+      note.textContent = '你现在看的是预览，所以大图没动 —— 要回屏上真图按「回到屏上真图」。';
+    } else {
+      const prev = lastModified;
+      // 读 Last-Modified 只是"顺便告诉你有没有新图"，它失败不该让整次刷新报错。
+      // （同源下正常能读到；本地 file:// 或别的域打开这页时就会失败 —— 那时
+      //  图照样刷新，只是这句话换成"读不到更新时间"。）
+      let headErr = null;
+      try {
+        const r = await fetch(IMG, { method: 'HEAD', cache: 'no-store' });
+        lastModified = r.headers.get('last-modified') || lastModified;
+      } catch (e) {
+        headErr = e.message;
+      }
+      await load(false);
+      const changed = prev && prev !== lastModified;
+      const when = lastModified ? new Date(lastModified).toLocaleString('zh-CN') : '未知';
+      note.textContent = (changed ? '已刷新：云端出了新图，' : '已刷新：云端没有新图，')
+                       + '屏上这张出图时间 ' + when
+                       + (headErr ? '（读时间失败：' + headErr + '）' : '（本机时间）。');
+    }
+  } catch (e) {
+    note.textContent = '刷新失败：' + e.message;
+  }
+  btn.disabled = false;
+  btn.textContent = original;
+}
+
+
+// 点皮肤 = 应用预览：只换这一页顶部那张大图，不写 GitHub、不改屏。
+// 之所以要这么直白地说，是因为"点了没上屏"是这里最容易误会的一件事。
+function previewSkin(name, label) {
+  previewing = true;
+  document.getElementById('shot').src = `skins/${name}.png?t=${Date.now()}`;
+  document.getElementById('shotTitle').textContent = `预览：${label}`;
+  document.getElementById('previewNote').hidden = false;
+  document.getElementById('backBtn').hidden = false;
+}
+
+function backToLive() {
+  previewing = false;
+  document.getElementById('shotTitle').textContent = 'Kindle 上现在这张';
+  document.getElementById('previewNote').hidden = true;
+  document.getElementById('backBtn').hidden = true;
+  document.getElementById('refreshNote').textContent = '';
+  loadImage();
+}
+
+// ---- 刷新排班表 -----------------------------------------------------------
+// 参数从设备那份 config.sh 现读，不在这里抄第二份 —— 抄一份就会在改了设备
+// 之后继续显示旧时刻表。算法照 aistatus.sh 的 minutes_until_next_fetch() 抄，
+// 包括"安静期跨过午夜"那种写法。
+const SCHED_URL = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main`
+                + `/kindle/extensions/aistatus/config.sh`;
+let S = null;
+
+function quietHour(h) {
+  const s = S.qStart, e = S.qEnd;
+  if (s === null || e === null) return false;
+  return s < e ? (h >= s && h < e) : (h >= s || h < e);
+}
+
+function nextSlots(n) {
+  // 和设备同一个算法：从"下一分钟"起，找第一个满足
+  //   (从零点起的分钟数 - 相位) % 步长 == 0  且不在安静期 的时刻。
+  // 两边各写一份是因为设备在 ash、这里在 JS，没法共用代码 ——
+  // 所以数值一律从 config.sh 现读，改配置这边自动跟着变，只有算法本身是两份。
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const out = [];
+  for (let i = 1, guard = 0; out.length < n && guard < 1500; guard++, i++) {
+    const m = nowMin + i;
+    if ((m - S.align) % S.every !== 0) continue;
+    if (quietHour(Math.floor(m / 60) % 24)) continue;
+    const when = new Date(now);
+    when.setHours(0, S.align, 0, 0);
+    when.setDate(when.getDate() + Math.floor(m / 1440));
+    when.setHours(Math.floor(m / 60) % 24);
+    out.push(when);
+  }
+  return out;
+}
+
+async function loadSchedule() {
+  const box = document.getElementById('sched');
+  try {
+    const r = await fetch(SCHED_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error(String(r.status));
+    const t = await r.text();
+    const num = (k, dft) => {
+      const m = t.match(new RegExp('^' + k + '=(\\d+)', 'm'));
+      return m ? parseInt(m[1], 10) : dft;
+    };
+    S = { every: num('FETCH_EVERY_MINUTES', 60), align: num('FETCH_ALIGN_MINUTE', 10),
+          qStart: num('QUIET_START', null), qEnd: num('QUIET_END', null) };
+    document.getElementById('schedSrc').textContent =
+      `（读自设备配置：每 ${S.every} 分钟、相位第 ${S.align} 分；`
+      + `${S.qStart}–${S.qEnd} 点不联网）`;
+    const now = new Date();
+    const rows = nextSlots(8).map((d, i) => {
+      const mins = Math.round((d - now) / 60000);
+      const day = d.getDate() !== now.getDate() ? `次日 ` : '';
+      const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      return `<tr><td>${day}${hhmm}</td><td>${mins} 分钟后</td>`
+           + `<td>${i === 0 ? '← 就是这一班取到最新那张' : ''}</td></tr>`;
+    }).join('');
+    box.innerHTML = `<table class="tbl"><tr><th>设备来取</th><th>距今</th><th></th></tr>${rows}</table>`;
+    const first = nextSlots(1)[0];
+    document.getElementById('next').textContent =
+      first ? `${String(first.getHours()).padStart(2, '0')}:${String(first.getMinutes()).padStart(2, '0')}`
+            : '—';
+  } catch (e) {
+    box.textContent = '读不到设备配置（' + e.message + '），时刻表先不显示';
+  }
+}
+
+
+async function load(showLog) {
+  await loadImage();
+  let logText = "";
+  try {
+    const r = await fetch(`${API}/contents/build.log?ref=${BRANCH}`,
+                          { headers: { Accept: "application/vnd.github.raw+json" } });
+    logText = r.ok ? await r.text() : `（读不到 build.log，HTTP ${r.status}）`;
+  } catch (e) {
+    logText = `（取 build.log 失败：${e}）`;
+  }
+  document.getElementById('log').textContent = logText;
+
+  // 天气源：日志里那行 "天气：和风天气，31°" 是最直接的证据
+  const m = logText.match(/天气[：:]\s*([^，,\n]+)/);
+  const srcEl = document.getElementById('src');
+  if (m) {
+    srcEl.textContent = m[1].trim();
+    srcEl.className = /和风/.test(m[1]) ? "ok" : "warn";
+  } else srcEl.textContent = "日志里没有";
+
+  const q = logText.match(/行情源\s*(\S+)/);
+  document.getElementById('qsrc').textContent = q ? q[1] : "—";
+
+  // 凭据注入：build.yml 每次出图前会打五行 ✓/✗。只报有没有，值永远不会出现在这里。
+  const creds = [...logText.matchAll(/\[凭据\]\s*(.)\s*(QWEATHER_\w+)/g)];
+  const box = document.getElementById('creds');
+  if (!creds.length) {
+    box.innerHTML = '<span class="warn">日志里没有凭据自检行 —— 这次构建用的还是旧版工作流</span>';
+  } else {
+    box.innerHTML = creds.map(([, flag, name]) =>
+      `<div class="${flag.trim() === '✓' ? 'ok' : 'bad'}">${flag.trim() === '✓' ? '✓' : '✗'} ${name}</div>`
+    ).join("");
+  }
+
+  // 上次出图时间：screen 分支只有一个提交（每次覆盖），它就是最近一次构建
+  try {
+    const r = await fetch(`${API}/commits?sha=${BRANCH}&per_page=1`);
+    const c = (await r.json())[0];
+    const when = new Date(c.commit.committer.date);
+    document.getElementById('built').textContent = when.toLocaleString('zh-CN');
+    const mins = Math.round((Date.now() - when) / 60000);
+    const ageEl = document.getElementById('age');
+    ageEl.textContent = mins < 60 ? `${mins} 分钟` : `${(mins / 60).toFixed(1)} 小时`;
+    // GitHub 的定时任务会被合并延迟，超过 4 小时才标红 —— 别把正常现象当故障
+    ageEl.className = mins > 240 ? "bad" : (mins > 90 ? "warn" : "ok");
+  } catch (e) { /* API 偶尔限流，留着上一次的数字就行 */ }
+
+  if (showLog) document.querySelector('details').open = true;
+}
+
+// 皮肤墙：读云端随图发布的 skins/manifest.json。
+// 用 createElement + textContent 而不是拼 innerHTML —— 内容虽然是我们自己
+// 生成的，但拼字符串这种写法一旦哪天数据里混进尖括号，页面就自己烂掉了。
+async function loadWall() {
+  const box = document.getElementById('wall');
+  document.getElementById('switch').href =
+    `https://github.com/${OWNER}/${REPO}/actions/workflows/build.yml/dispatch`;
+  try {
+    const r = await fetch(`skins/manifest.json?t=${Math.floor(Date.now() / 60000)}`);
+    if (!r.ok) throw new Error(String(r.status));
+    const m = await r.json();
+    box.textContent = '';
+    const add = (s) => {
+      const fig = document.createElement('figure');
+      fig.dataset.name = s.name;
+      if (s.current) fig.classList.add('cur');
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = s.name;
+      img.title = '点一下 = 预览并选中（不发布）';
+      img.src = `skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
+      img.onclick = () => { previewSkin(s.name, s.label || s.name); selectSkin(s.name, s.label || s.name); };
+      const cap = document.createElement('figcaption');
+      cap.textContent = (s.label || s.name) + (s.current ? ' · 屏上' : '');
+      const zoom = document.createElement('a');
+      zoom.href = `skins/${s.file}`;
+      zoom.target = '_blank';
+      zoom.textContent = ' 原图';
+      cap.appendChild(zoom);
+      fig.append(img, cap);
+      box.appendChild(fig);
+    };
+    for (const s of (m.skins || [])) add(s);
+  } catch (e) {
+    box.textContent = '还没有皮肤墙（云端那一步没跑，或者 screen 分支上还没发布 skins/）';
+  }
+}
+
+// ---- 发布 -----------------------------------------------------------------
+// 静态页要往 GitHub 写，唯一的路是带着用户自己的 token 直接调官方接口。
+// token 存 localStorage（本机、这个域名下），不进 URL、不进任何日志。
+const TOK_KEY = 'ss_kindle_plan_gh_token';
+let picked = null;
+
+function setMsg(text, cls) {
+  const el = document.getElementById('pubMsg');
+  el.textContent = text || '';
+  el.className = 'k ' + (cls || '');
+}
+
+function selectSkin(name, label) {
+  picked = name;
+  document.getElementById('pickName').textContent = `${label}（${name}）`;
+  document.querySelectorAll('#wall figure').forEach(function (f) {
+    f.classList.toggle('pick', f.dataset.name === name);
+  });
+}
+
+async function loadLiveSkin() {
+  const el = document.getElementById('liveSkin');
+  try {
+    const r = await fetch(`skin.txt?t=${Date.now()}`);
+    const v = (await r.text()).trim();
+    el.textContent = v ? `${v}` : '（按 config.yaml 的默认那套）';
+  } catch (e) {
+    el.textContent = '读不到';
+  }
+}
+
+async function publish() {
+  const tok = (document.getElementById('tok').value || '').trim();
+  if (!tok) { setMsg('先填 token。', 'bad'); return; }
+  if (!picked) { setMsg('先在墙上点一张，选中了才能发布。', 'bad'); return; }
+  localStorage.setItem(TOK_KEY, tok);          // 用户按了发布 = 同意记住
+  const btn = document.getElementById('pubBtn');
+  btn.disabled = true;
+  setMsg(`正在触发：${picked} …`);
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/build.yml/dispatches`,
+      { method: 'POST', mode: 'cors',
+        headers: { 'Authorization': 'Bearer ' + tok, 'content-type': 'application/json',
+                   'accept': 'application/vnd.github+json' },
+        body: JSON.stringify({ ref: 'main', inputs: { skin: picked } }) });
+    if (r.status === 401) throw new Error('token 无效或已撤销（401）');
+    if (r.status === 403) throw new Error('这个 token 对这个仓库没有 Actions: write（403）');
+    if (r.status === 404) throw new Error('找不到仓库或工作流（404）');
+    if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
+    setMsg(`已触发 ${picked}。约 1 分钟出图；屏上下一个整点第 10 分来取。`, 'ok');
+    setTimeout(loadLiveSkin, 90000);           // 等这轮跑完再回读
+  } catch (e) {
+    setMsg('发布失败：' + e.message, 'bad');
+  }
+  btn.disabled = false;
+}
+
+function forgetToken() {
+  localStorage.removeItem(TOK_KEY);
+  document.getElementById('tok').value = '';
+  setMsg('已清除本机 token。');
+}
+
+document.getElementById('note').textContent =
+  "刷新：图 60 秒一次，日志 3 分钟一次。GitHub 的整点任务会被延迟，" +
+  "「距今」超过 4 小时才算真卡住。";
+// token 只从本机 localStorage 回填，绝不写进页面源码或 URL。
+const savedTok = localStorage.getItem(TOK_KEY);
+if (savedTok) document.getElementById('tok').value = savedTok;
+
+load();
+loadWall();
+loadSchedule();
+loadLiveSkin();
+setInterval(loadImage, 60000);
+setInterval(load, 180000);
+setInterval(loadWall, 1800000);
+setInterval(loadSchedule, 600000);
+setInterval(loadLiveSkin, 180000);
+</script>
+</body>
+</html>

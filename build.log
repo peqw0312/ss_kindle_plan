@@ -1,0 +1,19 @@
+[凭据] ✓ QWEATHER_HOST 已注入
+[凭据] ✓ QWEATHER_ISS 已注入
+[凭据] ✓ QWEATHER_SUB 已注入
+[凭据] ✓ QWEATHER_KID 已注入
+[凭据] ✓ QWEATHER_PRIVATE_KEY 已注入
+[皮肤] 没指定、记的是「」或者名字不认，按 config.yaml 出图。可选：c1 arc
+[23:52:53] 配置：/home/runner/work/ss_kindle_plan/ss_kindle_plan/dashboard/config.yaml
+[23:52:53] 抓取天气…
+[23:52:55]   天气：和风天气，24°（1.2s）
+[23:52:55] 抓取行情…
+[sources] 行情源 tencent：命中 3/3
+[23:52:56]   行情：3/3 条有效（1.0s）
+[23:52:56] 速览已关闭（digest.enabled: false），跳过 RSS 与模型调用。
+[23:52:56] 日历：2026-09-26 · 周六 · 八月十六 · 秋分第4天
+[23:52:56] 渲染 1072x1448…
+[23:52:56]   字体：常规=Noto Sans CJK SC Regular / 粗体=Noto Sans CJK SC Bold / 显示=Noto Serif CJK SC Bold / 等宽=DejaVuSansMono.ttf / 窄体=DejaVuSansCondensed.ttf
+[23:52:56] 已输出 /home/runner/work/ss_kindle_plan/ss_kindle_plan/docs/dashboard.png（46.3 KB，8 位灰度）
+[23:52:56] 已输出网页版 /home/runner/work/ss_kindle_plan/ss_kindle_plan/docs/index.html
+[23:52:56] 已输出调试信息 /home/runner/work/ss_kindle_plan/ss_kindle_plan/docs/debug.json
