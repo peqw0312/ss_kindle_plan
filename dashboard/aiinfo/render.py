@@ -1926,6 +1926,26 @@ class Renderer:
                          py + (pbox + box("m_pct")) // 2, txt, self.f(fs["m_pct"]), INK)
         return py + pbox
 
+    def _c1_exit_hint(self) -> None:
+        """左上角那一枚「点两下退出」。
+
+        ⚠️ 它是**提示，不是热区**：框架停掉之后设备拿不到触摸坐标，能拿到的
+        只有"这次不是闹钟叫醒的"这一个信号（判定见
+        kindle/extensions/aistatus/bin/aistatus.sh 的连点段），所以点屏幕任何
+        位置都算一下，画在角上只是给一个"该去哪儿找出口"的落点。
+
+        位置取电量精灵图那条横带的左边 —— 那是整版唯一的死区，正文从它下沿起画。
+        """
+        _l, t, _r, b = self.battery_region()
+        f = self.f(22)
+        label = "点两下退出"
+        pad_x = self.px(16)
+        x0 = self.px(self.C1["margin"])
+        h = b - t
+        box = [x0, t, x0 + self.tw(label, f) + pad_x * 2, b]
+        self.d.rounded_rectangle(box, radius=h // 2, outline=GRAY, width=2)
+        self.text((x0 + pad_x, t + (h - self.lh(f)) // 2), label, f, GRAY)
+
     def _c1_body_height(self, cal, weather, quotes, funds, plan=None) -> int:
         """在 8×8 草稿上空画一遍量高度（同 _poster_body_height 的换画布手法）。"""
         saved = (self.img, self.d)
@@ -1977,6 +1997,7 @@ class Renderer:
             self._notes.append("「带」版内容偏长，已按优先级收起："
                                + "、".join(self._C1_DROPPED_LABELS[k]
                                            for k, v in plan.items() if v is False))
+        self._c1_exit_hint()
         self.block_boxes = {}
         y = self._c1_body(top, cal, weather, quotes, funds, extra, plan)
         self.block_boxes["calendar"] = (M, top, X1, y)
