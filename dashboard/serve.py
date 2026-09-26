@@ -167,6 +167,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    # Windows 控制台默认 GBK，⚠️ 这类字符一 print 就抛 UnicodeEncodeError，
+    # 会把服务**在启动那一下打死**（真发生过：警告分支只在 0.0.0.0 时走，
+    # 用 127.0.0.1 测的时候根本碰不到）。改成打不出来就替换成 ?，不影响功能。
+    try:
+        sys.stdout.reconfigure(errors="replace")
+        sys.stderr.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
     ap = argparse.ArgumentParser(description="信息屏局域网快道")
     ap.add_argument("--port", type=int, default=8731)
     ap.add_argument("--bind", default="0.0.0.0",
