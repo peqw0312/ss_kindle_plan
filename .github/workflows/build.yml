@@ -76,7 +76,10 @@ jobs:
           QWEATHER_SUB: ${{ secrets.QWEATHER_SUB }}
           QWEATHER_KID: ${{ secrets.QWEATHER_KID }}
           QWEATHER_PRIVATE_KEY: ${{ secrets.QWEATHER_PRIVATE_KEY }}
-        run: python dashboard/generate.py --config dashboard/config.yaml
+        # 用 pipefail 是因为 `| tee` 会把 python 的退出码吃掉 —— 不加的话
+        # 出图失败也会被当成成功，然后拿一张旧图继续挂上去，比报错更糟。
+        shell: bash
+        run: set -o pipefail && python dashboard/generate.py --config dashboard/config.yaml 2>&1 | tee "$RUNNER_TEMP/build.log"
 
       # 生成物放一个**专用分支 screen**，每次覆盖 —— 主分支的历史不会因为出图而变长。
       # 另一条路是"每月删一次历史"，但删完 GitHub 不一定立刻回收那些对象，
@@ -94,7 +97,13 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cp "$GITHUB_WORKSPACE/docs/dashboard.png" dashboard.png
-          git add dashboard.png
+          # 顺手把这次出图的完整输出也发出去。理由：Actions 的日志要登录才能看，
+          # 而这个文件谁都能取 —— 天气到底用的是和风还是降级到了 Open-Meteo、
+          # 降级的那句原因是什么，不用找任何人授权就能查。
+          # 注意里面会出现和风的 API Host（那是账号专属域名，不是凭据；
+          # 没有 JWT 什么都做不了），但绝不会出现 Key 或私钥。
+          cp "$RUNNER_TEMP/build.log" build.log 2>/dev/null || echo "（这次没留下日志）" > build.log
+          git add dashboard.png build.log
           git commit -q -m "信息屏 $(TZ=Asia/Shanghai date '+%m-%d %H:%M')"
           git push -q --force \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" screen

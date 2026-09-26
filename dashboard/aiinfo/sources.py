@@ -105,8 +105,14 @@ def get(url: str, *, headers: dict | None = None, timeout: int = DEFAULT_TIMEOUT
             last_err = exc
         if attempt < retries:
             time.sleep(0.8 * (attempt + 1))
-    # 把查询串一起打出来：和风的参数全在 URL 里，只打路径等于没打
-    shown = f"{url}?{urlencode(params)}" if params else url
+    # 把查询串一起打出来：和风的参数全在 URL 里，只打路径等于没打。
+    # 但 key 必须先抹掉 —— 这份输出会被写进公开仓库的 screen 分支当构建日志，
+    # 一旦哪天退回 API KEY 模式，原样打印就等于把凭据公开。
+    if params:
+        safe = {k: ("***" if "key" in k.lower() else v) for k, v in params.items()}
+        shown = f"{url}?{urlencode(safe)}"
+    else:
+        shown = url
     print(f"[sources] 抓取失败 {shown} -> {last_err}")
     return None
 
