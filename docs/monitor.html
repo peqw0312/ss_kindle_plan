@@ -46,6 +46,11 @@
   .tbl th, .tbl td { text-align: left; padding: 1px 14px 1px 0; font-weight: 400;
                      border-bottom: 1px solid #f0efed; }
   .tbl th { color: #a8a29e; font-size: 12px; }
+  .pub { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .pub input { flex: 1 1 320px; font: 12px ui-monospace, Consolas, monospace;
+               padding: 5px 8px; border: 1px solid #d6d3d1; border-radius: 5px; }
+  .wall .pick img { outline: 3px solid #2563eb; outline-offset: -3px; }
+  .wall .pick figcaption { color: #1d4ed8; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -84,7 +89,7 @@
   </div>
 
   <div class="card">
-    <b>皮肤墙</b><span class="k">（每套版式都用同一时刻的真灰度出图，点开放大看）</span>
+    <b>皮肤墙</b><span class="k">（同一时刻的真灰度出图；点一张 = 预览并选中，再按下面「发布」才上屏）</span>
     <div id="wall" class="wall">正在读取…</div>
     <p class="k" style="margin-bottom:0">
       换皮肤：<a id="switch" href="#" target="_blank">去 Actions 点「Run workflow」选一套</a>
@@ -94,6 +99,26 @@
       定稿记录：<a href="kept/确定.html" target="_blank">已确定的版面和图标</a>
       （C1 两态 + 信息终端 + 图标决策）。<a href="kept/图标.html" target="_blank">图标单独一页</a>。
       —— 那是设计定稿时的记录（含假数据的样子）；上面那面墙才是<b>现在真能换的</b>。
+    </p>
+  </div>
+
+  <div class="card">
+    <b>发布</b><span class="k">（把选中的那套设为屏上用的；约 1 分钟出图，屏上下一个整点第 10 分取）</span>
+    <div class="pub">
+      <span>屏上现在：<b id="liveSkin">读取中…</b></span>
+      <span>准备发布：<b id="pickName">（先点上面任意一张）</b></span>
+    </div>
+    <div class="pub">
+      <input id="tok" type="password" placeholder="GitHub fine-grained token（只要本仓库 Actions: write）"
+             autocomplete="off" spellcheck="false">
+      <button id="pubBtn" onclick="publish()">发布</button>
+      <button onclick="forgetToken()">清除本机 token</button>
+    </div>
+    <p class="k" id="pubMsg"></p>
+    <p class="k">
+      token 只存在<b>这台浏览器的 localStorage</b>，由页面直接发给 GitHub 官方接口，
+      不经过任何第三方（跨域已实测允许）。换浏览器或清缓存要重填一次；
+      想反悔随时在 GitHub → Settings → Developer settings → Fine-grained tokens 撤销。
     </p>
   </div>
 
@@ -272,15 +297,16 @@ async function loadWall() {
     box.textContent = '';
     const add = (s) => {
       const fig = document.createElement('figure');
-      if (s.current) fig.className = 'cur';
+      fig.dataset.name = s.name;
+      if (s.current) fig.classList.add('cur');
       const img = document.createElement('img');
       img.loading = 'lazy';
       img.alt = s.name;
-      img.title = '点一下 = 在上方预览（不改屏、不发布）';
+      img.title = '点一下 = 预览并选中（不发布）';
       img.src = `skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
-      img.onclick = () => previewSkin(s.name, s.label || s.name);
+      img.onclick = () => { previewSkin(s.name, s.label || s.name); selectSkin(s.name, s.label || s.name); };
       const cap = document.createElement('figcaption');
-      cap.textContent = (s.label || s.name) + (s.current ? ' · 现在' : '');
+      cap.textContent = (s.label || s.name) + (s.current ? ' · 屏上' : '');
       const zoom = document.createElement('a');
       zoom.href = `skins/${s.file}`;
       zoom.target = '_blank';
@@ -295,16 +321,86 @@ async function loadWall() {
   }
 }
 
+// ---- 发布 -----------------------------------------------------------------
+// 静态页要往 GitHub 写，唯一的路是带着用户自己的 token 直接调官方接口。
+// token 存 localStorage（本机、这个域名下），不进 URL、不进任何日志。
+const TOK_KEY = 'ss_kindle_plan_gh_token';
+let picked = null;
+
+function setMsg(text, cls) {
+  const el = document.getElementById('pubMsg');
+  el.textContent = text || '';
+  el.className = 'k ' + (cls || '');
+}
+
+function selectSkin(name, label) {
+  picked = name;
+  document.getElementById('pickName').textContent = `${label}（${name}）`;
+  document.querySelectorAll('#wall figure').forEach(function (f) {
+    f.classList.toggle('pick', f.dataset.name === name);
+  });
+}
+
+async function loadLiveSkin() {
+  const el = document.getElementById('liveSkin');
+  try {
+    const r = await fetch(`skin.txt?t=${Date.now()}`);
+    const v = (await r.text()).trim();
+    el.textContent = v ? `${v}` : '（按 config.yaml 的默认那套）';
+  } catch (e) {
+    el.textContent = '读不到';
+  }
+}
+
+async function publish() {
+  const tok = (document.getElementById('tok').value || '').trim();
+  if (!tok) { setMsg('先填 token。', 'bad'); return; }
+  if (!picked) { setMsg('先在墙上点一张，选中了才能发布。', 'bad'); return; }
+  localStorage.setItem(TOK_KEY, tok);          // 用户按了发布 = 同意记住
+  const btn = document.getElementById('pubBtn');
+  btn.disabled = true;
+  setMsg(`正在触发：${picked} …`);
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/build.yml/dispatches`,
+      { method: 'POST', mode: 'cors',
+        headers: { 'Authorization': 'Bearer ' + tok, 'content-type': 'application/json',
+                   'accept': 'application/vnd.github+json' },
+        body: JSON.stringify({ ref: 'main', inputs: { skin: picked } }) });
+    if (r.status === 401) throw new Error('token 无效或已撤销（401）');
+    if (r.status === 403) throw new Error('这个 token 对这个仓库没有 Actions: write（403）');
+    if (r.status === 404) throw new Error('找不到仓库或工作流（404）');
+    if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
+    setMsg(`已触发 ${picked}。约 1 分钟出图；屏上下一个整点第 10 分来取。`, 'ok');
+    setTimeout(loadLiveSkin, 90000);           // 等这轮跑完再回读
+  } catch (e) {
+    setMsg('发布失败：' + e.message, 'bad');
+  }
+  btn.disabled = false;
+}
+
+function forgetToken() {
+  localStorage.removeItem(TOK_KEY);
+  document.getElementById('tok').value = '';
+  setMsg('已清除本机 token。');
+}
+
 document.getElementById('note').textContent =
   "刷新：图 60 秒一次，日志 3 分钟一次。GitHub 的整点任务会被延迟，" +
   "「距今」超过 4 小时才算真卡住。";
+// token 只从本机 localStorage 回填，绝不写进页面源码或 URL。
+const savedTok = localStorage.getItem(TOK_KEY);
+if (savedTok) document.getElementById('tok').value = savedTok;
+
 load();
 loadWall();
 loadSchedule();
+loadLiveSkin();
 setInterval(loadImage, 60000);
 setInterval(load, 180000);
 setInterval(loadWall, 1800000);
 setInterval(loadSchedule, 600000);
+setInterval(loadLiveSkin, 180000);
 </script>
 </body>
 </html>
