@@ -505,7 +505,7 @@ def lay_terminal(sh, d, y, extra=0):
         return y
     today = next((i for i, c in enumerate(fc) if str(c[0]).startswith("今天")), None)
     pitch = CW // n
-    mix(sh, M, y, y + 34, "FORECAST", "近日天气", 28, 26, INK, "din", 10)
+    mix(sh, M, y, y + 34, "WEATHER", "近日天气", 28, 26, INK, "din", 10)
     y += 40
     ch = 164
     for i, (day, ik, desc, hi, lo) in enumerate(fc):
@@ -530,7 +530,7 @@ def lay_terminal(sh, d, y, extra=0):
     y += ch + 16
 
     # 行情：三行 + 条码分隔
-    mix(sh, M, y, y + 34, "SALVAGE LEDGER", "行情", 28, 26, INK, "din", 10)
+    mix(sh, M, y, y + 34, "INDEX QUOTES", "指数行情", 28, 26, INK, "din", 10)
     key_glyph(sh, X1, y, 34)
     y += 40
     for name, price, pct in d["quotes"]:
