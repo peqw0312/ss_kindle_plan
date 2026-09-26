@@ -171,6 +171,91 @@ def _scan_dirs() -> list[str]:
     return uniq
 
 
+#: 「信息终端」那套版式的骨架是**等宽读数**（SN/价格/读数全是一格一格的），
+#: 而这一路里以前根本没有等宽角色 —— fonts.py 甚至专门排除过等宽（字形偏窄）。
+#: 所以现在是"有选择地"加两个角色：mono 和 condensed。
+#: 顺序都是 Windows 真货 → Linux 开源近亲 → 退回常规字体。
+#: ⚠️ 近亲不是等价物：Consolas 和 DejaVu Sans Mono 的宽度、字怀都不一样，
+#:   所以同一套版式在本机和云端会看着不太一样。这不是 bug，是字体的事实 ——
+#:   验收要看**云端那张**，本机那张只是快。
+_MONO_CANDIDATES = [
+    r"C:\Windows\Fonts\consola.ttf",
+    r"C:\Windows\Fonts\cour.ttf",
+    "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+]
+
+_MONO_BOLD_CANDIDATES = [
+    r"C:\Windows\Fonts\consolab.ttf",
+    "/usr/share/fonts/truetype/jetbrains-mono/JetBrainsMono-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+]
+
+#: DIN 1451 血统的窄体工业字。云端没有 Bahnschrift（微软授权，不能塞进公开仓库），
+#: 用 Roboto Condensed / DejaVu Sans Condensed 顶：同样是"窄、规整、无衬线"。
+_CONDENSED_CANDIDATES = [
+    r"C:\Windows\Fonts\bahnschrift.ttf",
+    "/usr/share/fonts/truetype/roboto/RobotoCondensed-Regular.ttf",
+    "/usr/share/fonts/truetype/roboto/condensed/RobotoCondensed-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Narrow.ttf",
+    "/System/Library/Fonts/HelveticaNeue.ttc",
+]
+
+_CONDENSED_BOLD_CANDIDATES = [
+    r"C:\Windows\Fonts\bahnschrift.ttf",
+    "/usr/share/fonts/truetype/roboto/RobotoCondensed-Bold.ttf",
+    "/usr/share/fonts/truetype/roboto/condensed/RobotoCondensed-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-NarrowBold.ttf",
+]
+
+
+def _first_existing(paths) -> str | None:
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _fc_query(pattern: str) -> str | None:
+    """问 fontconfig 要一个**非中文**角色（等宽 / 窄体）。
+
+    不复用 _fc_match：那个写死了查中文（Noto Sans CJK / lang=zh-cn），
+    拿它查 mono 只会把中文字体还回来 —— 那种错最难发现，因为图照样出得来。
+    """
+    try:
+        res = subprocess.run(["fc-match", "-f", "%{file}", pattern],
+                             capture_output=True, text=True, timeout=10)
+        path = (res.stdout or "").strip()
+        return path if path and os.path.exists(path) else None
+    except Exception:
+        return None
+
+
+def resolve_variant(env_key: str, candidates: list[str], fc_pattern: str = ""):
+    """按"环境变量 > 已知路径 > fontconfig"找一个非中文角色。
+
+    找不到返回 **None**，让调用方决定退回哪一个 —— 等宽/窄体属于"锦上添花"，
+    缺了只是这套版式看着普通一点，不该让整个出图失败。
+    """
+    env_path = os.environ.get(env_key)
+    if env_path and os.path.exists(env_path):
+        return _resolve(env_path, True)
+    path = _first_existing(candidates)
+    if path:
+        return _resolve(path, True)
+    if fc_pattern:
+        fc = _fc_query(fc_pattern)
+        if fc:
+            return _resolve(fc, True)
+    return None
+
+
 def resolve(want_bold: bool = False) -> FontSpec:
     """找到可用的中文字体。优先级：环境变量 > 已知路径 > fontconfig > 目录扫描。"""
     env_key = "AIINFO_FONT_BOLD" if want_bold else "AIINFO_FONT"
@@ -221,6 +306,15 @@ class FontBook:
         self.bold_is_real = os.path.normcase(self.bold.path) != os.path.normcase(self.regular.path)
         self.display = display or resolve_display() or self.bold
         self.display_is_real = os.path.normcase(self.display.path) != os.path.normcase(self.bold.path)
+        # 信息终端那套要等宽读数和窄体标题。没有就退回常规/粗体 ——
+        # 版面几何不依赖它们，差的只是"工业感"。
+        self.mono = resolve_variant("AIINFO_FONT_MONO", _MONO_CANDIDATES, "mono")
+        self.mono_bold = resolve_variant("AIINFO_FONT_MONO_BOLD", _MONO_BOLD_CANDIDATES, "mono:bold")
+        self.condensed = resolve_variant("AIINFO_FONT_CONDENSED", _CONDENSED_CANDIDATES,
+                                         "sans-serif:style=Condensed")
+        self.condensed_bold = resolve_variant("AIINFO_FONT_CONDENSED_BOLD",
+                                              _CONDENSED_BOLD_CANDIDATES,
+                                              "sans-serif:style=Condensed:weight=bold")
         self._cache: dict[tuple[int, str], ImageFont.FreeTypeFont] = {}
         self._warn_if_no_cjk()
 
@@ -238,12 +332,22 @@ class FontBook:
     def get_display(self, size: int) -> ImageFont.FreeTypeFont:
         return self._get(size, "d")
 
+    def get_mono(self, size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+        return self._get(size, "mb" if bold else "m")
+
+    def get_condensed(self, size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+        return self._get(size, "cb" if bold else "c")
+
     def _get(self, size: int, weight: str) -> ImageFont.FreeTypeFont:
         size = max(6, int(round(size)))
         key = (size, weight)
         if key in self._cache:
             return self._cache[key]
-        spec = {"b": self.bold, "d": self.display}.get(weight, self.regular)
+        # 等宽 / 窄体缺字体时退回常规或粗体：宁可长得普通，也不能画不出来。
+        spec = {"b": self.bold, "d": self.display,
+                "m": self.mono or self.regular, "mb": self.mono_bold or self.bold,
+                "c": self.condensed or self.regular,
+                "cb": self.condensed_bold or self.bold}.get(weight, self.regular)
         if not spec.path:
             font = ImageFont.load_default()
         else:
@@ -261,7 +365,12 @@ class FontBook:
         suffix = "" if self.bold_is_real else "（无独立粗体，用描边模拟）"
         if not self.display_is_real:
             suffix += "（无宋体，显示字退回粗体黑）"
-        return f"常规={reg} / 粗体={bold} / 显示={disp}{suffix}"
+        # 等宽/窄体是什么要报出来：信息终端那套的观感一半靠它们，而本机是
+        # Consolas、云端是开源近亲 —— 不写清楚就会花时间去查"为什么两边不一样"。
+        mono = (os.path.basename(self.mono.path) if self.mono else "无→退常规")
+        cond = (os.path.basename(self.condensed.path) if self.condensed else "无→退常规")
+        return (f"常规={reg} / 粗体={bold} / 显示={disp}"
+                f" / 等宽={mono} / 窄体={cond}{suffix}")
 
 
 # 认这两组键，前一组优先（`font.*` 是通用写法，`clock.*` 是历史字段名）

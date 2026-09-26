@@ -243,9 +243,10 @@ def wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int,
 
 class Renderer:
     #: 有哪些版式，以及给人看的名字。皮肤墙、云端下拉、报错提示都以这里为准。
-    LAYOUTS = ("bands", "poster", "c1")
+    LAYOUTS = ("bands", "poster", "c1", "arc")
     LAYOUT_LABELS = {"bands": "条带（最早那版）", "poster": "帖（居中宋体大字）",
-                     "c1": "带（四条分带 + 大图标预报）"}
+                     "c1": "带（四条分带 + 大图标预报）",
+                     "arc": "信息终端（工业军规 · 线稿图标）"}
 
     def __init__(self, cfg, data: dict):
         self.data = data or {}
@@ -2113,6 +2114,13 @@ class Renderer:
         elif self.layout == "c1":
             self._cal_extra = self._weather_extra = self._quotes_extra = 0
             self._render_c1(weather, quotes, funds, cal)
+        elif self.layout == "arc":
+            # 信息终端：整版由 layout_arc 自己画（它带自己的图标和页脚），
+            # 这里只交给它正文起点和页脚线，好让它和别的版式共用同一套留白。
+            from .layout_arc import render_arc
+            self._cal_extra = self._weather_extra = self._quotes_extra = 0
+            render_arc(self, self.px(POSTER_BATTERY[3]) + self.px(16),
+                       self.h - self.px(44) - self.px(86))
         else:
             top_gap = self.px(TOP_GAP)
             footer_h = self.px(58)

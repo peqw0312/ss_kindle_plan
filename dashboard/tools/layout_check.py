@@ -397,11 +397,11 @@ def main() -> int:
     print("=" * 66)
 
     print("\n【纵向预算】")
-    # poster（帖）和 c1（带）都是"直接渲染、量实际矩形"的量法；
+    # poster（帖）、c1（带）、arc（信息终端）都是"直接渲染、量实际矩形"的量法；
     # 只有 bands 才需要按条带基准高去预算。c1 刚加进来时这里漏了，
     # 于是它拿 bands 的数字报了个 ✅ —— 假通过，比不查更糟。
     layout = str(cfg.get("style.layout", "bands") or "bands").lower()
-    direct_measure = layout in ("poster", "c1")
+    direct_measure = layout in ("poster", "c1", "arc")
     worst = 0
     worst_slack = 10 ** 9
     for tag, when, weather in SCENARIOS:
