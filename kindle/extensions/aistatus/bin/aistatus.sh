@@ -122,6 +122,21 @@ wifi_connected() {
     lipc-get-prop com.lab126.wifid cmState 2>/dev/null | grep -qi connected
 }
 
+# 连不上时到底卡在哪一层：射频没开 / 没关联上 AP / 关联上了但没 IP / 有 IP 却出不去。
+# 以前只写一句"WiFi 连接超时"，这四种完全不同的病在日志里长得一模一样 ——
+# 跟当年 curl 只写"下载失败"是同一个毛病，别再犯。
+wifi_state() {
+    radio=$(lipc-get-prop com.lab126.cmd wirelessEnable 2>/dev/null)
+    cm=$(lipc-get-prop com.lab126.wifid cmState 2>/dev/null)
+    ip=$(ifconfig wlan0 2>/dev/null | tr -c '0-9.' '\n' \
+         | grep -x '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | head -1)
+    case "$ip" in
+        "") ping_result="没发" ;;
+        *) if ping -c 1 -W 3 "$WIFI_TEST_IP" >/dev/null 2>&1; then ping_result="通"; else ping_result="不通"; fi ;;
+    esac
+    echo "射频=${radio:-读不到} · cmState=${cm:-读不到} · wlan0=${ip:-无IP} · ping $WIFI_TEST_IP=$ping_result"
+}
+
 wait_for_wifi() {
     waited=0
     while [ "$waited" -lt "$WIFI_TIMEOUT" ]; do
@@ -497,8 +512,13 @@ refresh() {
     [ "$WIFI_SLEEP" = "1" ] && wifi_on
 
     if ! wait_for_wifi; then
-        log "WiFi 连接超时，本轮跳过"
+        log "WiFi 连接超时，本轮跳过：$(wifi_state)"
         consecutive_failures=$((consecutive_failures + 1))
+        # WIFI_SLEEP=0 时我们不碰射频，于是"关联掉了"这件事没人负责捡起来 ——
+        # 而 Kindle 只在射频重新打开的那一刻才会自动重连存过的网络。
+        # 所以这里关一下再开：本轮不等它连好（等也来不及），下一轮再试。
+        wifi_off; sleep 3; wifi_on
+        log "已经把射频关开过一次，下一轮重连"
         [ "$WIFI_SLEEP" = "1" ] && wifi_off
         return 1
     fi
