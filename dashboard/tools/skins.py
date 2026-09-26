@@ -84,8 +84,18 @@ def main() -> int:
             line(name, BAD, rec["error"])
         skins.append(rec)
 
+    # 定稿但还没移植成版式的：也摆上墙，但**标清楚它不是能换的皮肤**。
+    # 不摆上来就会让人以为设计丢了 —— 墙上只有三张的时候，用户第一反应
+    # 就是"我设计的那两版呢"（2026-09-26 原话）。
+    # 那两张图是 design_kept.py 用**写死的假数据**出的稿，所以只当样子看。
+    records = [{"name": "袭-甲", "label": "信息终端 · 设计稿（假数据，未上屏）",
+                "file": "kept/袭-甲.png", "switchable": False},
+               {"name": "袭-甲-无预警", "label": "信息终端 · 无预警态（同上）",
+                "file": "kept/袭-甲-无预警.png", "switchable": False}]
+
     manifest = {"generated_at": data["generated_at"].strftime("%Y-%m-%d %H:%M:%S"),
-                "current": current, "layouts": list(layouts), "skins": skins}
+                "current": current, "layouts": list(layouts), "skins": skins,
+                "records": records}
     (out / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     line("清单", OK, str(out / "manifest.json"))

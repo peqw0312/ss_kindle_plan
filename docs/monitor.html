@@ -39,6 +39,9 @@
   .wall figcaption { font-size: 12px; color: #57534e; margin-top: 4px; }
   .wall .cur img { outline: 3px solid #16a34a; outline-offset: -3px; }
   .wall .cur figcaption { color: #15803d; font-weight: 600; }
+  /* 定稿但还没移植的：压暗 + 虚线边，一眼看出"这张现在换不了" */
+  .wall .dim img { opacity: .55; border-style: dashed; }
+  .wall .dim figcaption { color: #a8a29e; }
 </style>
 </head>
 <body>
@@ -158,23 +161,26 @@ async function loadWall() {
     if (!r.ok) throw new Error(String(r.status));
     const m = await r.json();
     box.textContent = '';
-    for (const s of (m.skins || [])) {
+    const add = (s, dim) => {
       const fig = document.createElement('figure');
-      if (s.current) fig.className = 'cur';
+      if (s.current) fig.className = 'cur'; else if (dim) fig.className = 'dim';
       const a = document.createElement('a');
-      a.href = `skins/${s.file}`;
+      a.href = s.file.startsWith('kept/') ? s.file : `skins/${s.file}`;
       a.target = '_blank';
       const img = document.createElement('img');
       img.loading = 'lazy';
       img.alt = s.name;
-      img.src = `skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
+      img.src = (s.file.startsWith('kept/') ? s.file : `skins/${s.file}`)
+              + `?t=${Math.floor(Date.now() / 60000)}`;
       const cap = document.createElement('figcaption');
       cap.textContent = (s.label || s.name) + (s.current ? ' · 现在' : '')
                       + (s.error ? ' · 出图失败' : '');
       a.appendChild(img);
       fig.append(a, cap);
       box.appendChild(fig);
-    }
+    };
+    for (const s of (m.skins || [])) add(s, false);
+    for (const s of (m.records || [])) add(s, true);
   } catch (e) {
     box.textContent = '还没有皮肤墙（云端那一步没跑，或者 screen 分支上还没发布 skins/）';
   }
