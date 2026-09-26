@@ -142,10 +142,10 @@ WMO_CODES: dict[int, tuple[str, str]] = {
     2: ("多云", "sun_cloud"),
     3: ("阴", "cloud"),
     45: ("有雾", "fog"),
-    48: ("雾凇", "fog"),
-    51: ("小毛毛雨", "rain"),
+    48: ("冻雾", "fog"),
+    51: ("毛毛雨", "rain"),
     53: ("毛毛雨", "rain"),
-    55: ("大毛毛雨", "rain"),
+    55: ("强毛毛雨", "rain"),
     56: ("冻毛毛雨", "rain"),
     57: ("强冻毛毛雨", "rain"),
     61: ("小雨", "rain"),
@@ -163,8 +163,13 @@ WMO_CODES: dict[int, tuple[str, str]] = {
     85: ("小阵雪", "snow"),
     86: ("阵雪", "snow"),
     95: ("雷阵雨", "thunder"),
-    96: ("雷阵雨伴冰雹", "thunder"),
-    99: ("强雷暴冰雹", "thunder"),
+    # 96/99 的字面含义确实带冰雹（"雷暴伴小/大冰雹"），但**别照字面翻**：
+    # Open-Meteo 那套全球模式约 11 公里网格，把普通夏天雷阵雨也常常标成 96/99，
+    # 于是九月下旬的杭州会在墙上连着三天"雷阵雨伴冰雹"。墙上这块屏是家里人看的，
+    # 喊错一次的信任代价远大于漏报一次，所以这里只保留"雷暴强弱"这一层信息。
+    # 真要冰雹，气象部门会发预警 —— 预警那一栏才是该喊的地方。
+    96: ("雷阵雨", "thunder"),
+    99: ("强雷阵雨", "thunder"),
 }
 
 WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -176,11 +181,49 @@ def describe_weather(code: int | None) -> tuple[str, str]:
     return WMO_CODES.get(int(code), ("未知", "cloud"))
 
 
-def aqi_level(us_aqi: float | None) -> tuple[str, str]:
-    """返回 (等级中文, 建议标签)。"""
-    if us_aqi is None:
+#: 中国 AQI（HJ 633-2012）的污染物浓度限值。行 = 浓度（µg/m³），
+#: 列对应 IAQI 0 / 50 / 100 / 150 / 200 / 300 / 400 / 500。
+#: 只用得上 PM2.5 和 PM10 两档 —— 免费接口给的就是这两项。
+AQI_BREAKPOINTS = {
+    "pm2p5": [0, 35, 75, 115, 150, 250, 350, 500],
+    "pm10": [0, 50, 150, 250, 350, 420, 500, 600],
+}
+AQI_IAQI = [0, 50, 100, 150, 200, 300, 400, 500]
+
+
+def _iaqi(conc: float, limits: list[float]) -> float:
+    """线性插值算单项 IAQI。浓度超过最后一档就按爆表 500 处理。"""
+    if conc <= 0:
+        return 0.0
+    for i in range(1, len(limits)):
+        if conc <= limits[i]:
+            lo, hi = limits[i - 1], limits[i]
+            return (conc - lo) / (hi - lo) * (AQI_IAQI[i] - AQI_IAQI[i - 1]) + AQI_IAQI[i - 1]
+    return float(AQI_IAQI[-1])
+
+
+def china_aqi(pm25: float | None, pm10: float | None) -> float | None:
+    """按中国标准算 AQI = 各污染物 IAQI 的最大值。
+
+    ⚠️ 这里踩过一个坑：Open-Meteo 的空气接口给的是 **美国 EPA 的 AQI**，
+    而分级文字（优 / 良 / 轻度污染 …）是中国的。两边数值断点长得一样（50/100/
+    150/200/300），但底下那套污染物限值完全不同 —— 同一口空气美国 AQI 能比中国
+    AQI 高几十点，于是"美国 152 + 中国文字"就在屏幕上显示成了「中度污染」，
+    而国内 App 显示的是「优 48」。所以自己用浓度算，不要拿 us_aqi 直接贴标签。
+    """
+    parts = []
+    if pm25 is not None:
+        parts.append(_iaqi(float(pm25), AQI_BREAKPOINTS["pm2p5"]))
+    if pm10 is not None:
+        parts.append(_iaqi(float(pm10), AQI_BREAKPOINTS["pm10"]))
+    return max(parts) if parts else None
+
+
+def aqi_level(aqi: float | None) -> tuple[str, str]:
+    """中国 AQI -> (等级中文, 建议标签)。分级就是国内 App 那六档。"""
+    if aqi is None:
         return ("--", "")
-    v = float(us_aqi)
+    v = float(aqi)
     if v <= 50:
         return ("优", "可户外")
     if v <= 100:
@@ -194,6 +237,10 @@ def aqi_level(us_aqi: float | None) -> tuple[str, str]:
     return ("严重污染", "关窗")
 
 
+#: 蒲福风级的下限（km/h）：索引 i 就是 i 级，例如 2 级从 6 km/h 起。
+BEAUFORT_KMH = [0, 1, 6, 12, 20, 29, 39, 50, 62, 75, 89, 104, 118]
+
+
 def effective_wind_level(weather: dict) -> int | None:
     """风的蒲福风级。
 
@@ -202,7 +249,9 @@ def effective_wind_level(weather: dict) -> int | None:
     所以换算统一收在这里 —— 以前这段换算逻辑长在 render.py 里，
     结果是自检工具打出来的值和屏幕上的值对不上（屏幕上正常，工具里是 None）。
 
-    5 km/h 一档是蒲福风级的粗略对应（1 级≈5km/h，2 级≈11，3 级≈19…）。
+    ⚠️ 换算原来是 `round(km/h ÷ 5)`，那是错的：风级不是线性刻度，
+    越往上每档越宽。40 km/h 会被它算成 8 级（实际 6 级），
+    100 km/h 会报成 12 级（实际 11 级）。改成查官方下限表。
     """
     level = weather.get("wind_level")
     if level is not None:
@@ -214,7 +263,11 @@ def effective_wind_level(weather: dict) -> int | None:
         speed = float(speed)
     except (TypeError, ValueError):
         return None
-    return min(12, max(0, int(round(speed / 5.0))))
+    out = 0
+    for i, lo in enumerate(BEAUFORT_KMH):
+        if speed >= lo:
+            out = i
+    return out
 
 
 def _fetch_weather_openmeteo(cfg) -> dict | None:
@@ -304,14 +357,15 @@ def _fetch_weather_openmeteo(cfg) -> dict | None:
 def fetch_air_quality(lat, lon, tz: str) -> dict | None:
     payload = get_json(
         "https://air-quality-api.open-meteo.com/v1/air-quality"
-        f"?latitude={lat}&longitude={lon}&current=pm2_5,pm10,us_aqi"
+        f"?latitude={lat}&longitude={lon}&current=pm2_5,pm10"
         f"&timezone={requests.utils.quote(tz)}",
         timeout=20,
     )
     if not payload or "current" not in payload:
         return None
     cur = payload["current"]
-    aqi = cur.get("us_aqi")
+    # 故意不再请求 us_aqi：那是美国 EPA 的数，配不上中国的分级文字（见 china_aqi）
+    aqi = china_aqi(cur.get("pm2_5"), cur.get("pm10"))
     level, advice = aqi_level(aqi)
     return {
         "aqi": _round(aqi),
@@ -563,6 +617,13 @@ def _fetch_weather_qweather(cfg) -> dict | None:
                                 "severity": color or str(item.get("severity") or "")})
 
     first = forecast[0] if forecast else {}
+    sunrise = _hhmm((day_list[0].get("astro") or {}).get("sunrise")) if day_list else ""
+    sunset = _hhmm((day_list[0].get("astro") or {}).get("sunset")) if day_list else ""
+    # v1 的实况里没有"现在是白天还是黑夜"，但当天的日出日落就在预报里，比一下时刻
+    # 就够了 —— 原来这里写死 is_day=1，等于晚上也画一个太阳出来。
+    # "HH:MM" 是零填充的，字符串比较就是时间比较。
+    now_hm = datetime.now().strftime("%H:%M")
+    is_day = 1 if (not sunrise or not sunset or sunrise <= now_hm < sunset) else 0
     return {
         "source": "和风天气",
         "obs_time": cur.get("forecastStartTime") or cur.get("observationTime"),
@@ -578,11 +639,11 @@ def _fetch_weather_qweather(cfg) -> dict | None:
         "precip": _round(_q_num(cur, "precipitation", "amount", "value")),
         "pressure": _round(_q_num(cur, "pressure", "value")),
         "vis": _round((float(vis_m) / 1000) if vis_m is not None else None),
-        "is_day": 1,
+        "is_day": is_day,
         "uv": _round(cur.get("uvIndex")),
         "pop": first.get("pop"),
-        "sunrise": _hhmm((day_list[0].get("astro") or {}).get("sunrise")) if day_list else "",
-        "sunset": _hhmm((day_list[0].get("astro") or {}).get("sunset")) if day_list else "",
+        "sunrise": sunrise,
+        "sunset": sunset,
         "forecast": forecast,
         "air": air,
         "warning": warning,

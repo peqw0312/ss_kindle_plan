@@ -1791,7 +1791,9 @@ class Renderer:
         self.d.rectangle([M + dw + px(20), y, M + dw + px(21), y + band1 - 1],
                          fill=GRAY_LIGHT)
         ry = y
-        self._ink_lt(rx, ry, ry + box("meta"), meta, self.f(fs["meta"]), GRAY)
+        # 这行是日期带里唯一的"小字说明"，130 灰在墨色屏上偏淡看不清（用户反馈），
+        # 用 70 灰：比正文黑浅一档，但远看也清楚。
+        self._ink_lt(rx, ry, ry + box("meta"), meta, self.f(fs["meta"]), INK_SOFT)
         ry += box("meta") + gi
         self._ink_lt(rx, ry, ry + box("lunar"), lunar_line,
                      self.f(fs["lunar"], True), INK)
