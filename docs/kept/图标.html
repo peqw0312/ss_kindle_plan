@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>天气图标审查 · 五张</title>
+<style>
+ body{margin:0;background:#14161a;color:#d8d5cd;
+      font:15px/1.75 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+ header{padding:24px 28px 16px;border-bottom:3px solid #3a3d42;background:#1b1e22}
+ h1{margin:0 0 6px;font-size:21px;color:#f0ede4}
+ header p{margin:0;color:#a8a49a;font-size:13.5px;max-width:900px}
+ main{padding:24px 28px 80px;display:grid;grid-template-columns:repeat(auto-fit,
+       minmax(420px,1fr));gap:22px;max-width:1700px}
+ figure{margin:0;background:#1b1e22;border:1px solid #3a3d42;padding:14px 16px 16px}
+ h2{margin:0 0 8px;font-size:18px;color:#f0ede4}
+ .d{margin:10px 0 0;color:#b3afa5;font-size:12.5px}
+ .shot{line-height:0}
+ img{width:100%;height:auto;border:1px solid #3a3d42}
+</style></head><body>
+<header><h1>天气图标审查 · 灰阶 / 尺寸 / 对齐 / 灰底 / 线稿</h1>
+<p>前三张是生产里那套「柔雾 · 灰实心」图标（aiinfo.render.Renderer.icon）原样调用，只换墨色和尺寸。
+雨系现在按强度计滴数：毛毛雨与小雨 1 滴、中雨 2 滴、大雨与阵雨 3 滴、暴雨 4 滴（不靠把滴画大）。
+第四张是灰底矩阵 —— 版面里已经有 130 灰的「昨天」格和黑色的「今天」格，图标在非纸底上必须照样读得出。
+第五张是 ARC 信息终端选用的线稿一套；落选的冲压实心与点阵已归档到 <code>.workbuddy/_archive/2026-09-26/</code>。</p></header>
+<main>
+    <figure>
+      <h2>图标-灰阶</h2>
+      <div class="shot"><img src="图标-灰阶.png" alt="图标-灰阶.png"></div>
+      <p class="d">14 种天气 × 6 种墨色。看反相和浅灰那两列有没有糊掉的。</p>
+    </figure>
+    <figure>
+      <h2>图标-尺寸</h2>
+      <div class="shot"><img src="图标-尺寸.png" alt="图标-尺寸.png"></div>
+      <p class="d">尺寸下限审查：32px 起雨滴/雷开始并笔，生产里最小用到 40px（预报小行）。</p>
+    </figure>
+    <figure>
+      <h2>图标-对齐</h2>
+      <div class="shot"><img src="图标-对齐.png" alt="图标-对齐.png"></div>
+      <p class="d">align_cloud 关/开对照：灰线是云体中心，开的那排四朵云齐平。</p>
+    </figure>
+    <figure>
+      <h2>图标-灰底</h2>
+      <div class="shot"><img src="图标-灰底.png" alt="图标-灰底.png"></div>
+      <p class="d">版面已经有两种非纸底：昨天格 130 灰、今天格黑。灰底上可用的是纯黑和纯白，130 前景在 130 底上直接消失 —— 所以昨天格的图标一律用黑。</p>
+    </figure>
+    <figure>
+      <h2>图标-线稿</h2>
+      <div class="shot"><img src="图标-线稿.png" alt="图标-线稿.png"></div>
+      <p class="d">ARC 信息终端选用的线稿一套：14 种天气 × 纸/黑/130 灰三种底。落选的冲压实心和点阵已归档。</p>
+    </figure></main></body></html>

@@ -173,7 +173,12 @@ jobs:
           if [ -d "$GITHUB_WORKSPACE/docs/skins" ]; then
             cp -r "$GITHUB_WORKSPACE/docs/skins" skins
           fi
-          git add dashboard.png build.log index.html skin.txt
+          # 定稿记录：设计轮点头留下的版面和图标（汇总页 + 它引用的图）。
+          # 这些是**快照**，不在云端现跑：design_arc.py 的字体分工写死了
+          # Bahnschrift / Impact / Consolas，那是 Windows 才有的字，Linux runner
+          # 上跑出来是另一副样子。要重新出稿就在本机跑 design_kept.py。
+          cp -r "$GITHUB_WORKSPACE/docs/kept" kept
+          git add dashboard.png build.log index.html skin.txt kept
           [ -d skins ] && git add skins
           git commit -q -m "信息屏 $(TZ=Asia/Shanghai date '+%m-%d %H:%M')"
           git push -q --force \
