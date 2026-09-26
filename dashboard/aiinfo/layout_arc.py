@@ -413,7 +413,10 @@ def lay_terminal(sh, d, y, extra=0):
     y += 58 + 12 + e[0]
 
     # 序列号行 + 条码
-    sn = "SN 2026-0925-07 // DAILY CYCLE 4x"
+    # 出稿这行是写死的 "SN 2026-0925-07 // DAILY CYCLE 4x"。生产屏上挂一个假日期
+    # 是说不过去的（这块屏唯一的作用就是"此刻是真的"），所以改成从出图时间算，
+    # 后面的数字就是实际画了几格预报 —— 不编装饰性数字。
+    sn = d.get("sn") or "SN ------ // DAILY CYCLE 0x"
     sh.ink(M, y, y + 30, sn, sh.f.mono(24), GRAY)
     barcode(sh, X1 - 220, y - 2, 220, 30, seed=3, c=GRAY)
     y += 30 + 14 + e[1]
@@ -604,8 +607,11 @@ def arc_data(cfg, data: dict) -> dict:
     if quotes and cfg.get("quotes.enabled", True):
         mid.append("行情 腾讯")
 
+    fc = _forecast(wx)
     return {
         "place": clean_text(cfg.get("location.name", ""), 20),
+        "sn": (f'SN {data["generated_at"].strftime("%Y-%m%d")}-07'
+               f' // DAILY CYCLE {len(fc)}x'),
         "cal": {
             "month": f"{cal.solar_year} 年 {cal.solar_month} 月",
             "day": str(cal.solar_day),
@@ -623,7 +629,7 @@ def arc_data(cfg, data: dict) -> dict:
             "icon": wx.get("icon", "cloud"),
             "cells": _cells(wx),
             "warn": warn,
-            "fc": _forecast(wx),
+            "fc": fc,
         },
         "quotes": quotes,
         "foot_l": f"更新 {data['generated_at'].strftime('%m-%d %H:%M')}",
