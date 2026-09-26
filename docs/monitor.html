@@ -233,20 +233,22 @@ function quietHour(h) {
 }
 
 function nextSlots(n) {
+  // 和设备同一个算法：从"下一分钟"起，找第一个满足
+  //   (从零点起的分钟数 - 相位) % 步长 == 0  且不在安静期 的时刻。
+  // 两边各写一份是因为设备在 ash、这里在 JS，没法共用代码 ——
+  // 所以数值一律从 config.sh 现读，改配置这边自动跟着变，只有算法本身是两份。
   const now = new Date();
-  const curH = now.getHours(), curM = now.getMinutes();
-  let h = curM >= S.align ? curH + 1 : curH;
-  while (h % S.every !== 0) h += 1;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
   const out = [];
-  for (let guard = 0; out.length < n && guard < 60; guard++) {
-    if (!quietHour(h % 24)) {
-      const when = new Date(now);
-      when.setHours(0, S.align, 0, 0);
-      when.setDate(when.getDate() + Math.floor(h / 24));
-      when.setHours(h % 24);
-      out.push(when);
-    }
-    h += S.every;
+  for (let i = 1, guard = 0; out.length < n && guard < 1500; guard++, i++) {
+    const m = nowMin + i;
+    if ((m - S.align) % S.every !== 0) continue;
+    if (quietHour(Math.floor(m / 60) % 24)) continue;
+    const when = new Date(now);
+    when.setHours(0, S.align, 0, 0);
+    when.setDate(when.getDate() + Math.floor(m / 1440));
+    when.setHours(Math.floor(m / 60) % 24);
+    out.push(when);
   }
   return out;
 }
@@ -261,10 +263,10 @@ async function loadSchedule() {
       const m = t.match(new RegExp('^' + k + '=(\\d+)', 'm'));
       return m ? parseInt(m[1], 10) : dft;
     };
-    S = { every: num('FETCH_EVERY_HOURS', 1), align: num('FETCH_ALIGN_MINUTE', 10),
+    S = { every: num('FETCH_EVERY_MINUTES', 60), align: num('FETCH_ALIGN_MINUTE', 10),
           qStart: num('QUIET_START', null), qEnd: num('QUIET_END', null) };
     document.getElementById('schedSrc').textContent =
-      `（读自设备配置：每 ${S.every} 小时、第 ${S.align} 分；`
+      `（读自设备配置：每 ${S.every} 分钟、相位第 ${S.align} 分；`
       + `${S.qStart}–${S.qEnd} 点不联网）`;
     const now = new Date();
     const rows = nextSlots(8).map((d, i) => {
@@ -272,7 +274,7 @@ async function loadSchedule() {
       const day = d.getDate() !== now.getDate() ? `次日 ` : '';
       const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       return `<tr><td>${day}${hhmm}</td><td>${mins} 分钟后</td>`
-           + `<td>${i === 0 ? '← 就是这一班取到云端最新那张' : ''}</td></tr>`;
+           + `<td>${i === 0 ? '← 就是这一班取到最新那张' : ''}</td></tr>`;
     }).join('');
     box.innerHTML = `<table class="tbl"><tr><th>设备来取</th><th>距今</th><th></th></tr>${rows}</table>`;
     const first = nextSlots(1)[0];

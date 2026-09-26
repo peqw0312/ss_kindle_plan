@@ -23,20 +23,41 @@
 #
 #    每次请求都会自动带一个一次性参数（`?t=秒数`）破缓存：jsDelivr 对分支引用
 #    最长缓存 12 小时，Pages 也有 10 分钟边缘缓存，不破除的话屏幕能停在半天前。
-DASHBOARD_URLS="https://peqw0312.github.io/ss_kindle_plan/dashboard.png https://cdn.jsdelivr.net/gh/peqw0312/ss_kindle_plan@screen/dashboard.png https://raw.githubusercontent.com/peqw0312/ss_kindle_plan/screen/dashboard.png"
+#    顺序 = 优先级：第一个是**局域网快道**（电脑上 dashboard/serve.py 起的），
+#    点一下网页就能出图，不用等 GitHub 那约 1 分钟 + CDN 缓存。
+#    电脑关着 / 服务没起时，这条会在几百毫秒内失败（局域网拒绝连接是立刻的），
+#    然后自动落到下面三个云端出口 —— 所以快道坏了不会让屏变白，只是变慢。
+#    ⚠️ 这个 IP 必须是路由器给电脑**固定下来**的（DHCP 保留），否则电脑重新
+#      拿到地址之后快道会静默失效，而失效的样子和"电脑没开"一模一样，很难查。
+DASHBOARD_URLS="http://192.168.31.158:8731/dashboard.png https://peqw0312.github.io/ss_kindle_plan/dashboard.png https://cdn.jsdelivr.net/gh/peqw0312/ss_kindle_plan@screen/dashboard.png https://raw.githubusercontent.com/peqw0312/ss_kindle_plan/screen/dashboard.png"
 
 # ② 整图刷新节奏 -----------------------------------------------------------
-#    规则只有一条：每隔 FETCH_EVERY_HOURS 小时取一次，并且**对齐到每小时的第
-#    FETCH_ALIGN_MINUTE 分**。GitHub 是静态文件、发不了自定义头，所以"几点取图"
-#    只能由设备自己定；云端那边由 `.github/workflows/build.yml` 的 cron 决定，
-#    两边节奏要配套。
+#    规则只有一条：每隔 FETCH_EVERY_MINUTES 分钟取一次，并且落在固定的时间格上。
+#    格子怎么算：从零点起，凡是满足 (该分钟数 - FETCH_ALIGN_MINUTE) 能被
+#    FETCH_EVERY_MINUTES 整除的时刻，就是一个档位。所以
+#      60 / 10 → 每小时第 10 分（老行为，完全没变）
+#      10 / 10 → 每小时第 10、20、30、40、50、00 分
+#      5  / 2  → 每 5 分钟，错开 2 分钟
+#    GitHub 是静态文件、发不了自定义头，所以"几点取图"只能由设备自己定；
+#    云端那边由 `.github/workflows/build.yml` 的 cron 决定，两边节奏要配套。
 #
-#    为什么要对齐到一个固定分钟，而不是"上次成功 + 一小时"：那样取图时刻每天
+#    为什么要对齐到一个固定格子，而不是"上次成功 + N 分钟"：那样取图时刻每天
 #    往后漂（18:11、19:14、20:22……），屏上"更新 HH:MM"看着就没规律。
 #    第 10 分是实测出来的：Actions 整点才开始跑，跑完提交回仓库要两三分钟，
 #    前面还有一层 CDN 缓存 —— 卡在整点去取必然拿到上一张。
-FETCH_EVERY_HOURS=1             # 每隔几小时取一次
-FETCH_ALIGN_MINUTE=10           # 落在每小时的第几分（0-59）
+#
+#    ⚠️ 调小这个数字 = 拿电换响应。每一档都要醒一次、开 WiFi、取文件。
+#      60 分钟 = 24 次/天，10 分钟 = 144 次/天。真休眠是好的（实测睡满 601s），
+#      但"取回来发现和上次一模一样"这件事必须跳过重绘才省得到屏幕上那一下 ——
+#      这条由 screen_shown_hash 负责，见 aistatus.sh 里那段"曾经把屏幕弄白"的注释。
+FETCH_EVERY_MINUTES=10          # 每隔几分钟取一次
+FETCH_ALIGN_MINUTE=10           # 相位：对齐到第几分（0-59）
+
+#    连续跳过重绘多少次之后，强制再画一次。防的是"有我们没记到的清屏事件"
+#    （人为重启了 framework、别的程序盖了屏）—— 那样屏幕会一直白着，而这个
+#    上限把最坏情况压到 SKIP_STREAK_MAX × FETCH_EVERY_MINUTES 分钟。
+#    默认 6：按 10 分钟一档 = 最多 1 小时必真刷一次。
+SKIP_STREAK_MAX=6
 
 #    安静期：这段时间**一次都不联网**。墨水屏不刷新也一直显示着，半夜没人看，
 #    凌晨那几个小时取图纯属白耗电。到点后第一个合法档位自动恢复。

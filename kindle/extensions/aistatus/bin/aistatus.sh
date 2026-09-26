@@ -5,7 +5,7 @@
 #  省电逻辑说明（这是整个项目最关键的一段，别随手改）：
 #    设备绝大多数时间在 `echo mem` 里睡死，墨水屏保持画面本身零功耗。
 #    醒来的节奏由两件事决定，取更短的那个：
-#      · 取图节奏 —— 设备本机算：每 FETCH_EVERY_HOURS 小时一次，对齐到每小时
+#      · 取图节奏 —— 设备本机算：每 FETCH_EVERY_MINUTES 分钟一次，对齐到固定格子
 #        第 FETCH_ALIGN_MINUTE 分；QUIET_START~QUIET_END 这段时间完全不联网
 #      · STOP_CHECK_MAX_SLEEP —— 为了「停止信息屏」能在 10 分钟内生效，
 #        再长的觉也切成 10 分钟一段来睡（一天醒 144 次，仍然远比贴钟时省）
@@ -91,6 +91,12 @@ sleep_ok_seconds=0      # 这些一共睡了多少秒
 sleep_short=0           # 睡进去但被提前叫醒的次数
 sleep_bounce=0          # 一秒弹回的次数
 bounce_warned=0         # 空转警告只喊一次
+# 屏幕上**此刻**是哪张图（按我们上次真的画出去的那份内容算）。
+# 为什么不拿 /tmp 里的缓存文件当依据：那样干过一次，把屏幕永久弄白了 ——
+# 缓存文件在，不代表屏幕上还是它（framework 一停、或者显示过充电提醒，屏幕就变了），
+# 于是"和上次一样"= 什么都不画 = 一直白着。见 refresh() 里那段注释。
+screen_hash=""          # 空 = 不知道屏幕上是什么，必须画
+skip_streak=0           # 连续跳过几次了；到上限强制画一次兜底
 
 # ---------------------------------------------------------------------------
 log() {
@@ -360,6 +366,11 @@ battery_level() {
     gasgauge-info -c 2>/dev/null | tr -cd '0-9'
 }
 
+file_hash() {
+    # busybox 一定有 cksum；md5sum 在部分固件上没编进去，别赌。
+    cksum "$1" 2>/dev/null | cut -d' ' -f1,2
+}
+
 show_image() {
     # 局部刷新快且不闪屏，但会累积残影；贴时钟的那 60 次/小时更是明显，
     # 所以整图这一下默认每次都全刷（FULL_REFRESH_EVERY=1），等于每小时清一次鬼影。
@@ -371,6 +382,9 @@ show_image() {
         eips -g "$IMG" >/dev/null 2>&1
     fi
     refresh_count=$((refresh_count + 1))
+    # 只有"我们真的把这张画上去了"才敢记下屏幕内容 —— 这是跳过重绘的唯一依据。
+    screen_hash=$(file_hash "$IMG")
+    skip_streak=0
 }
 
 show_status_line() {
@@ -385,6 +399,9 @@ show_low_battery_notice() {
     bat=$(battery_level)
     # 直接用系统字模在屏幕上敲字，不依赖网络也不依赖图片
     eips -c >/dev/null 2>&1
+    # 屏幕上已经不是那张信息图了 —— 必须作废，否则下一轮"图没变"会跳过重绘，
+    # 充电提醒就永远留在屏上。
+    screen_hash=""
     eips 10 8 "  AI 信息屏 · 电量不足  " >/dev/null 2>&1
     eips 10 11 "  当前电量：${bat}%  " >/dev/null 2>&1
     eips 10 14 "  请尽快接上充电器，  " >/dev/null 2>&1
@@ -443,7 +460,8 @@ now_minutes() {
 }
 
 # 距离下一个取图时刻还有多少**分钟**。规则只有一条：每隔
-# FETCH_EVERY_HOURS 小时取一次，并且落在每小时的第 FETCH_ALIGN_MINUTE 分上。
+# FETCH_EVERY_MINUTES 分钟取一次，并且落在 (分钟数 - FETCH_ALIGN_MINUTE) 能被步长
+# 整除的那些格子上（60/10 就是每小时第 10 分，和以前完全一样）。
 #
 # 为什么要对齐到一个固定的分钟：不对齐的话 next 是"上次成功 + 3600 秒"推出来的，
 # 于是取图时刻每天往后漂（18:11、19:14、20:22……），屏上"更新 HH:MM"看着就没规律。
@@ -454,26 +472,24 @@ now_minutes() {
 # 的支持随固件版本变，解析失败会**静默**返回空，那就又是"屏幕冻一整天、
 # 日志一个字不写"那一类坑。小时数也不写 $((10#$h))，ash 不保证认 —— 剥前导零。
 minutes_until_next_fetch() {
-    step=${FETCH_EVERY_HOURS:-1}
-    case "$step" in ''|*[!0-9]*) step=1 ;; esac
-    [ "$step" -ge 1 ] && [ "$step" -le 12 ] || step=1
+    step=${FETCH_EVERY_MINUTES:-60}
+    case "$step" in ''|*[!0-9]*) step=60 ;; esac
+    [ "$step" -ge 1 ] && [ "$step" -le 720 ] || step=60
     am=${FETCH_ALIGN_MINUTE:-10}
     case "$am" in ''|*[!0-9]*) am=10 ;; esac
     [ "$am" -le 59 ] || am=10
 
     now_min=$(now_minutes) || return 1
-    cur_h=$(( now_min / 60 ))
-    cur_m=$(( now_min % 60 ))
 
-    h=$cur_h
-    [ "$cur_m" -ge "$am" ] && h=$(( h + 1 ))
-    while [ $(( h % step )) -ne 0 ]; do h=$(( h + 1 )); done
-
-    # 再往后跳过安静期。上限 48 档，防的是"整天都设成安静期"这种自相矛盾的写法。
-    i=0
-    while [ "$i" -le 48 ]; do
-        if ! in_quiet_hour $(( (h + i * step) % 24 )); then
-            echo $(( (h + i * step) * 60 + am - now_min ))
+    # 往后一分钟一分钟找第一个"合法档位"。
+    # 为什么不直接算：busybox ash 的取模对负数是往零截断的（凌晨 00:05、am=10
+    # 时 (now-am) 是负数），算出来的下一档会跳过今天那一格。多跑一千多次整数
+    # 运算换来"一眼就看得出对"，值。
+    i=1
+    while [ "$i" -le 1500 ]; do
+        m=$(( now_min + i ))
+        if [ $(( (m - am) % step )) -eq 0 ] && ! in_quiet_hour $(( (m / 60) % 24 )); then
+            echo "$i"
             return 0
         fi
         i=$(( i + 1 ))
@@ -501,13 +517,13 @@ plan_next_image() {
     fi
     mins=$(minutes_until_next_fetch)
     if [ -n "$mins" ]; then
-        log "下次取图：${mins} 分钟后（每 ${FETCH_EVERY_HOURS:-1} 小时、第 ${FETCH_ALIGN_MINUTE:-10} 分；安静期 ${QUIET_START:-无}-${QUIET_END:-无} 点）"
+        log "下次取图：${mins} 分钟后（每 ${FETCH_EVERY_MINUTES:-60} 分钟、相位第 ${FETCH_ALIGN_MINUTE:-10} 分；安静期 ${QUIET_START:-无}-${QUIET_END:-无} 点）"
         echo $((pnow + mins * 60))
         return 0
     fi
     # 算不出来（配置写坏了）也要有个节奏，而且必须喊出来 —— 静默不刷新是本项目
     # 栽过最多次的那类故障。
-    log "!! 算不出取图时刻，先按 3600s 兜底（查 FETCH_EVERY_HOURS / QUIET_START / QUIET_END）"
+    log "!! 算不出取图时刻，先按 3600s 兜底（查 FETCH_EVERY_MINUTES / QUIET_START / QUIET_END）"
     echo $((pnow + 3600))
 }
 
@@ -558,10 +574,30 @@ refresh() {
 
     if [ "$got" = "1" ]; then
         sync_clock
-        # 别想着"图没变就跳过刷新"省掉那一下白闪 —— 这么干过，然后把屏幕永久弄白了：
-        # $IMG 只是 /tmp 里的缓存文件，不代表屏幕上现在是什么。framework 一停屏幕就
-        # 被清成白的，而缓存文件还在，于是"和上次一样"= 什么都不画 = 一直白着。
-        # 要省白闪得拿屏幕的真实状态当依据，不是拿文件。
+        new_hash=$(file_hash "$TMP")
+        # 取回来和屏上那张一模一样时，可以省掉那一下白闪 —— 局域网快道把取图
+        # 提到每 10 分钟一次之后，这一条是必需的，不然屏幕每小时白闪 6 次。
+        #
+        # ⚠️ 判据必须是"屏幕现在是什么"（screen_hash，只在真的画出去之后才记），
+        #   不能是"/tmp 里那份缓存"。以前拿缓存文件比过，结果把屏幕永久弄白了：
+        #   framework 一停屏幕被清成白的，而缓存文件还在，于是"和上次一样"=
+        #   什么都不画 = 一直白着。
+        #
+        # SKIP_STREAK_MAX 是兜底：万一有我们没记到的清屏事件（人为重启了 framework、
+        # 别的程序盖了屏），最多连续跳过这么多次就强制画一次，白屏不会过夜。
+        if [ -n "$screen_hash" ] && [ "$new_hash" = "$screen_hash" ] \
+           && [ "$skip_streak" -lt "${SKIP_STREAK_MAX:-6}" ]; then
+            skip_streak=$((skip_streak + 1))
+            # 只在"第一次发现没变"时说一声，之后静默 —— 否则 10 分钟一档会把
+            # 500 行的日志全刷成同一句话，真正要查的东西反而被挤掉。
+            [ "$skip_streak" -eq 1 ] && log "取回来和屏上那张一样，跳过重绘（之后连续相同就安静）"
+            rm -f "$TMP" 2>/dev/null
+            consecutive_failures=0
+            log "这段的休眠：真睡 ${sleep_ok} 次共 ${sleep_ok_seconds}s · 提前醒 ${sleep_short} 次 · 弹回 ${sleep_bounce} 次"
+            sleep_ok=0; sleep_ok_seconds=0; sleep_short=0; sleep_bounce=0
+            [ "$WIFI_SLEEP" = "1" ] && wifi_off
+            return 0
+        fi
         mv "$TMP" "$IMG"
         # 每拿到一张好图就另存一份进设备存储。/tmp 重启就空了，而"点启动立刻贴一张"
         # 靠的就是这个文件 —— 不同步的话重启后贴的可能是上个月的旧图，
@@ -589,6 +625,8 @@ refresh() {
     # 连续失败 3 次以上才启用备用图，避免偶发抖动就切走画面
     if [ "$consecutive_failures" -ge 3 ] && [ -f "$FALLBACK_IMAGE" ]; then
         cp "$FALLBACK_IMAGE" "$IMG" 2>/dev/null && eips -g "$IMG" >/dev/null 2>&1
+        # 备用图盖上去了，屏上内容不再是刚才那张 —— 作废。
+        screen_hash=""
     fi
     rm -f "$TMP" 2>/dev/null
     [ "$WIFI_SLEEP" = "1" ] && wifi_off
@@ -754,7 +792,7 @@ init() {
     log "=== 启动 AI 信息屏 ==="
     log "出口地址（按顺序试）："
     for u in $DASHBOARD_URLS; do log "   $u"; done
-    log "整图：每 ${FETCH_EVERY_HOURS:-1} 小时取一次、对齐到第 ${FETCH_ALIGN_MINUTE:-10} 分；安静期 ${QUIET_START:-无}-${QUIET_END:-无} 点（这段时间不联网）"
+    log "整图：每 ${FETCH_EVERY_MINUTES:-60} 分钟取一次、相位第 ${FETCH_ALIGN_MINUTE:-10} 分；安静期 ${QUIET_START:-无}-${QUIET_END:-无} 点（这段时间不联网）"
     # 这一行是拿来当场核表的：屏幕上的时间就是这个 date 的输出，
     # 和你对着手表看到的时刻不一样 → 就是 config.sh 的 TIMEZONE 错了，别改别的。
     log "设备时间 $(date '+%Y-%m-%d %H:%M:%S')（TZ=${TZ:-未设置}，epoch $(date +%s)）"
