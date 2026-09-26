@@ -67,12 +67,15 @@ jobs:
       - name: 生成信息屏图片
         env:
           TZ: Asia/Shanghai
-          # 和风天气的两个值。仓库是**公开的**，所以它们绝不能写进 config.yaml ——
-          # 那等于把钥匙贴在全世界都能看的门上。这里从 Secrets 注入环境变量，
-          # sources._qweather_creds() 会读 QWEATHER_HOST / QWEATHER_KEY。
-          # 没配这两个 Secret 也不会失败：代码会自动回落到 Open-Meteo。
+          # 和风天气的凭据。仓库是**公开的**，所以这些东西一律走 Secrets，
+          # 绝不写进 config.yaml —— 那等于把钥匙贴在世界都能看的门上。
+          # 五个值缺一不可；少任何一个，代码就安静地回落到 Open-Meteo，
+          # 屏右下角那行小字会跟着变，这是判断"到底用没用到和风"最快的办法。
           QWEATHER_HOST: ${{ secrets.QWEATHER_HOST }}
-          QWEATHER_KEY: ${{ secrets.QWEATHER_KEY }}
+          QWEATHER_ISS: ${{ secrets.QWEATHER_ISS }}
+          QWEATHER_SUB: ${{ secrets.QWEATHER_SUB }}
+          QWEATHER_KID: ${{ secrets.QWEATHER_KID }}
+          QWEATHER_PRIVATE_KEY: ${{ secrets.QWEATHER_PRIVATE_KEY }}
         run: python dashboard/generate.py --config dashboard/config.yaml
 
       # 生成物放一个**专用分支 screen**，每次覆盖 —— 主分支的历史不会因为出图而变长。

@@ -165,20 +165,26 @@ clock:
 #    只能走公开地址），填进来等于把钥匙贴在全世界都能看的门上 —— 别人拿你的 Key
 #    刷接口，超了配额算在你账号上。
 #
-#    正确的放法是 GitHub Secrets（免费、不公开）：
-#      仓库 → Settings → Secrets and variables → Actions →
-#      New repository secret，建两条：
-#        QWEATHER_HOST   =  控制台给你的专属 Host，形如 abcdef.re.qweatherapi.com
-#        QWEATHER_KEY    =  那串 32 位 Key
-#      Actions 会把它们注入成环境变量，`sources._qweather_creds()` 自动读。
-#      本机临时验证：在同一个命令行里带上下划线变量再跑 generate.py 即可。
+#    正确的放法是 GitHub Secrets（免费、不公开）。仓库 → Settings →
+#    Secrets and variables → Actions → New repository secret，建这五条：
+#      QWEATHER_HOST         专属 API Host，如 abcdef.re.qweatherapi.com
+#      QWEATHER_ISS          开发者ID（控制台 → 设置，Q 开头 10 位）
+#      QWEATHER_SUB          项目ID（控制台 → 项目管理）
+#      QWEATHER_KID          凭据ID（JWT 凭据详情页）
+#      QWEATHER_PRIVATE_KEY  Ed25519 私钥：PEM 原文，或 PEM 的一行 base64
+#    五个缺任何一个，代码就安静地回落到 Open-Meteo（不报错），
+#    看屏右下角那行小字是"天气 和风天气"还是"天气 Open-Meteo"就知道。
 #
-#    和风开通步骤（免费订阅）：注册 → 控制台 → 项目管理 → 创建项目（Web API）
-#      → 凭据里就能同时看到 API Host 和 Key。
-#      ⚠️ 旧域名 `devapi.qweather.com`（2026-01 停）、`api.qweather.com`（2026-06 停）
-#         已经不能用，网上教程几乎都是旧的，照抄一定失败 —— 必须用控制台发的那个专属 Host。
-#      ⚠️ 注册需要手机号，创建 Key 还要过**实名认证**，这一点和"不实名"的初衷冲突，
-#         是用户自己点头要的（2026-09-25），别在别的场合替他们决定。
+#    ⚠️ 为什么用 JWT 而不是更省事的 API KEY：官方明确写了
+#      「2027 年 1 月 1 日起，使用 API KEY 认证方式都将受请求量的限制」，
+#      而 JWT 不受限。这块屏是要长期挂的，所以一次做对。
+#
+#    ⚠️ 创建凭据时**别选「启用全部API」** —— 那会把热带气旋/海洋/辐照一起开，
+#      这三个不提供免费额度，任何请求都会计费。选「指定API」，只勾：
+#      天气预报、天气预警、空气质量。
+#
+#    ⚠️ 接口版本：v7 正在停服（天气预警 v7 于 2026-10-01 停、天气预报 v7 于
+#      2027-08-01 停），代码里用的已经是 v1。网上教程几乎都是 v7，别照抄。
 # -----------------------------------------------------------------------------
 weather:
   enabled: true
@@ -187,8 +193,8 @@ weather:
   show_air: true         # 空气质量
   show_warning: true     # 有气象灾害预警时，顶掉日历条上的节气进度，优先显示预警
   qweather:
-    api_host: ""         # ← 别填！放到 GitHub Secrets 的 QWEATHER_HOST
-    api_key: ""          # ← 别填！放到 GitHub Secrets 的 QWEATHER_KEY
+    api_host: ""         # ← 别填！放 GitHub Secrets 的 QWEATHER_HOST
+    api_key: ""          # ← 别填！公开仓库里写 Key 等于公开
 
 # -----------------------------------------------------------------------------
 # ⑦ 今日速览（**默认关闭**）

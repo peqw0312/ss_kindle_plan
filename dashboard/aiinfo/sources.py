@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import base64
 import html
+import json
 import os
 import re
 import time
@@ -18,6 +20,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urlencode
 
 import requests
 
@@ -83,7 +86,8 @@ def clean_summary(raw: str | None, limit: int = 0) -> str:
 
 
 def get(url: str, *, headers: dict | None = None, timeout: int = DEFAULT_TIMEOUT,
-        encoding: str | None = None, retries: int = 2) -> requests.Response | None:
+        encoding: str | None = None, retries: int = 2,
+        params: dict | None = None) -> requests.Response | None:
     """带重试的 GET。失败返回 None 而不是抛异常。"""
     merged = {"User-Agent": UA, "Accept": "*/*"}
     if headers:
@@ -91,7 +95,7 @@ def get(url: str, *, headers: dict | None = None, timeout: int = DEFAULT_TIMEOUT
     last_err: Exception | None = None
     for attempt in range(retries + 1):
         try:
-            resp = _SESSION.get(url, headers=merged, timeout=timeout)
+            resp = _SESSION.get(url, headers=merged, timeout=timeout, params=params)
             if resp.status_code == 200:
                 if encoding:
                     resp.encoding = encoding
@@ -101,7 +105,9 @@ def get(url: str, *, headers: dict | None = None, timeout: int = DEFAULT_TIMEOUT
             last_err = exc
         if attempt < retries:
             time.sleep(0.8 * (attempt + 1))
-    print(f"[sources] 抓取失败 {url} -> {last_err}")
+    # 把查询串一起打出来：和风的参数全在 URL 里，只打路径等于没打
+    shown = f"{url}?{urlencode(params)}" if params else url
+    print(f"[sources] 抓取失败 {shown} -> {last_err}")
     return None
 
 
@@ -339,40 +345,123 @@ def qweather_icon(text) -> str:
     return "cloud"
 
 
-def _qweather_creds(cfg) -> tuple[str, str]:
-    """返回 (host, key)。任一为空就当作没配好，调用方会走去 Open-Meteo。
+_WIND_CN = {
+    "n": "北", "nne": "东北", "ne": "东北", "ene": "东北", "e": "东",
+    "ese": "东南", "se": "东南", "sse": "东南", "s": "南", "ssw": "西南",
+    "sw": "西南", "wsw": "西南", "w": "西", "wnw": "西北", "nw": "西北",
+    "nnw": "西北",
+}
 
-    ⚠️ 这两个值**不要写进 config.yaml** —— 那个仓库是公开的，写进去等于把钥匙
-    贴在全世界都能看的门上。正路是环境变量：Actions 上由 GitHub Secrets 注入，
-    本机临时测试用 `$env:QWEATHER_KEY='...'` 带一下就行。
-    config.yaml 里那两项留着，是为了"私有部署"时方便，默认就该空着。
+
+def _qweather_creds(cfg) -> dict:
+    """和风的凭据**只从环境变量读**。
+
+    ⚠️ 本仓库是公开的（Kindle 没法带 token 认证，只能走公开地址），凭据写进
+    config.yaml 等于把钥匙贴在世界都能看的门上。config.yaml 里那两项保持空着。
+
+    优先 JWT（官方推荐；而且官方明确写了 2027-01-01 起 API KEY 方式会被限流）：
+      QWEATHER_HOST         专属域名，如 abcdef.re.qweatherapi.com
+      QWEATHER_ISS          开发者ID（控制台 → 设置，Q 开头的 10 位）
+      QWEATHER_SUB          项目ID（控制台 → 项目管理）
+      QWEATHER_KID          凭据ID（JWT 凭据详情页）
+      QWEATHER_PRIVATE_KEY  Ed25519 私钥：PEM 原文，或 PEM 的 base64（一行更好贴）
+    只有 API KEY 时退回老办法：QWEATHER_KEY。
     """
-    host = str(cfg.get("weather.qweather.api_host", "")
-               or os.environ.get("QWEATHER_HOST", "")).strip()
-    key = str(cfg.get("weather.qweather.api_key", "")
-              or os.environ.get("QWEATHER_KEY", "")).strip()
+    env = os.environ
+    host = str(cfg.get("weather.qweather.api_host", "") or env.get("QWEATHER_HOST", "")).strip()
     if str(cfg.get("weather.qweather.api_key", "") or "").strip():
         print("[sources] ⚠️ 和风 Key 写在 config.yaml 里，而这个仓库是**公开的** —— "
-              "等于把钥匙贴在世界都能看的门上。请清空它，改用 GitHub Secrets 的 QWEATHER_KEY。")
+              "请清空它，改用 GitHub Secrets 的 QWEATHER_KEY。")
     if host and not host.startswith(("http://", "https://")):
         host = "https://" + host
-    return host.rstrip("/"), key
+    return {
+        "host": host.rstrip("/"),
+        "key": str(cfg.get("weather.qweather.api_key", "")
+                   or env.get("QWEATHER_KEY", "")).strip(),
+        "iss": env.get("QWEATHER_ISS", "").strip(),
+        "sub": env.get("QWEATHER_SUB", "").strip(),
+        "kid": env.get("QWEATHER_KID", "").strip(),
+        "priv": env.get("QWEATHER_PRIVATE_KEY", "").strip(),
+    }
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _qweather_jwt(creds: dict) -> str:
+    """签一个和风要的 EdDSA JWT。字段严格按官方文档，不要自作主张加东西。
+
+    header  {alg: EdDSA, kid}
+    payload {iss: 开发者ID, sub: 项目ID, iat, exp}
+    三段分别 Base64**URL** 编码（不是普通 Base64，也**不能带 = padding**）后用点拼起来。
+    官方还特意说明：iat 建议设成当前时间**前 30 秒**，防的是机器之间几秒的时钟差
+    直接把 token 判成"还没生效"。
+    """
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+    pem = creds["priv"]
+    if "BEGIN" not in pem:                      # 一行 base64 的写法更好贴进 Secrets
+        pem = base64.b64decode(pem).decode("utf-8")
+    key = load_pem_private_key(pem.encode("utf-8"), password=None)
+
+    now = int(time.time())
+    head = _b64url(json.dumps({"alg": "EdDSA", "kid": creds["kid"]},
+                              separators=(",", ":")).encode("utf-8"))
+    body = _b64url(json.dumps({"iss": creds["iss"], "sub": creds["sub"],
+                               "iat": now - 30, "exp": now + 3600},
+                              separators=(",", ":")).encode("utf-8"))
+    sig = _b64url(key.sign(f"{head}.{body}".encode("ascii")))
+    return f"{head}.{body}.{sig}"
+
+
+def _qweather_auth(creds: dict):
+    """返回 (headers, params)。JWT 优先，没有 JWT 那四样才退回 ?key=。"""
+    if all(creds.get(k) for k in ("priv", "kid", "iss", "sub")):
+        try:
+            return {"Authorization": "Bearer " + _qweather_jwt(creds)}, {}
+        except Exception as exc:                                # noqa: BLE001
+            print(f"[sources] 和风 JWT 签名失败（{exc!r}），尝试用 API KEY。")
+    if creds.get("key"):
+        return {}, {"key": creds["key"]}
+    return None, None
+
+
+def _q_num(obj, *path) -> Any:
+    """从 {value: 12.3, unit: °C} 这种套娃里取数，任何一层缺失都返回 None。"""
+    cur: Any = obj
+    for p in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(p)
+    return cur
 
 
 def _fetch_weather_qweather(cfg) -> dict | None:
-    """和风天气：实况 + 逐天预报 + 空气质量 + 灾害预警。
+    """和风天气 **v1**：实况 + 逐天预报 + 空气质量 + 灾害预警。
 
-    两个必须知道的点：
-    1. 公共域名 `devapi.qweather.com` / `api.qweather.com` 已在 2026 年停服，
-       现在必须用控制台下发的**专属 API Host**（形如 xxxx.re.qweatherapi.com）。
-       网上教程大多还写着旧域名，照抄会失败。
-    2. `location` 参数是「经度,纬度」，和常见的纬度在前正好相反，写反了会查到别的城市。
+    三件必须知道的事（2026-09-26 逐页对着官方文档核过，别照网上的旧教程改回去）：
 
-    接口返回 gzip，requests 会自动解压，不需要手动加 --compressed。
+    1. **v7 正在停服**：天气预警 v7 于 2026-10-01 停止运行，天气预报 v7 于
+       2027-08-01 停止。本项目因此直接写 v1 —— 曾经用的
+       `/v7/weather/now`、`/v7/warning/now` 那些路径全部作废。
+    2. v1 的坐标在**路径**里，顺序是「纬度/经度」；而 v7 是
+       `location=经度,纬度`。**两者顺序相反**，从 v7 抄来的代码必然查错城市。
+       坐标最多支持小数点后两位（我们的 config.yaml 正好只留两位）。
+    3. 每日预报默认返回 **UTC** 时间，必须带 `localTime=true`，否则
+       "今天"那一格在北京时间早上会指到昨天/明天的日上去。
+
+    接口的 `metadata.attributions` 要求署名，所以页脚会显示"天气 和风天气"。
     """
-    host, key = _qweather_creds(cfg)
-    if not host or not key:
-        print("[sources] 没配和风天气的 API Host / Key，天气回落到 Open-Meteo。")
+    creds = _qweather_creds(cfg)
+    host = creds["host"]
+    if not host:
+        print("[sources] 没配和风天气的 API Host，天气回落到 Open-Meteo。")
+        return None
+    headers, params = _qweather_auth(creds)
+    if headers is None:
+        print("[sources] 和风没有可用凭据（JWT 需要 QWEATHER_PRIVATE_KEY / _ISS / "
+              "_SUB / _KID，或者改用 QWEATHER_KEY），回落到 Open-Meteo。")
         return None
 
     lat = cfg.get("location.latitude")
@@ -380,92 +469,114 @@ def _fetch_weather_qweather(cfg) -> dict | None:
     if lat is None or lon is None:
         print("[sources] 未配置经纬度，跳过天气。")
         return None
+    coord = f"{lat}/{lon}"
 
-    location = f"{lon},{lat}"
-    headers = {"X-QW-Api-Key": key}
+    def get(path: str, **query):
+        p = dict(params)
+        p.update(query)
+        return get_json(f"{host}{path}", headers=headers, params=p, timeout=20)
 
-    now_payload = get_json(f"{host}/v7/weather/now?location={location}",
-                           headers=headers, timeout=20)
-    code = now_payload.get("code") if isinstance(now_payload, dict) else None
-    if not isinstance(now_payload, dict) or str(code) != "200":
-        print(f"[sources] 和风实况失败（code={code}），回落到 Open-Meteo。"
-              if code else "[sources] 和风实况请求失败，回落到 Open-Meteo。")
+    cur = get(f"/weather/v1/current/{coord}", lang="zh")
+    if not isinstance(cur, dict) or "temperature" not in cur:
+        err = (cur or {}).get("error") if isinstance(cur, dict) else None
+        print(f"[sources] 和风实况失败（{err or '无响应'}），回落到 Open-Meteo。")
         return None
-    n = now_payload.get("now") or {}
 
-    # 和风只有 3d / 7d 两档，没有 4d，按需要几天挑一档
-    days = max(2, min(int(cfg.get("weather.days", 4)), 7))
-    span = 3 if days <= 3 else 7
-    daily_payload = get_json(f"{host}/v7/weather/{span}d?location={location}",
-                             headers=headers, timeout=20) or {}
-    daily = daily_payload.get("daily") or []
+    wind = cur.get("wind") or {}
+    text = str(_q_num(cur, "condition", "text") or "")
+    # v1 的风速单位是 m/s，而渲染层和 Open-Meteo 那条路约定的是 km/h，先统一
+    speed_ms = _q_num(wind, "speed", "value")
+    vis_m = _q_num(cur, "visibility", "value")
 
+    days = max(2, min(int(cfg.get("weather.days", 4)), 10))
+    daily_payload = get(f"/weather/v1/daily/{coord}", days=days,
+                        localTime="true", lang="zh") or {}
+    day_list = daily_payload.get("days") or []
+
+    today_date = datetime.now().date()
     forecast = []
-    for i, day in enumerate(daily[:days]):
-        text = str(day.get("textDay") or "")
+    for i, d in enumerate(day_list[:days]):
+        daytime = d.get("daytime") or {}
+        start = str(d.get("forecastStartTime") or "")[:10]
         try:
-            weekday = WEEKDAYS[datetime.strptime(day["fxDate"], "%Y-%m-%d").weekday()]
-            label = "今天" if i == 0 else ("明天" if i == 1 else weekday)
-        except Exception:                                   # noqa: BLE001
-            label = f"D{i}"
+            delta = (datetime.strptime(start, "%Y-%m-%d").date() - today_date).days
+        except ValueError:
+            delta = i
+        label = {0: "今天", 1: "明天"}.get(delta) or (
+            WEEKDAYS[datetime.strptime(start, "%Y-%m-%d").weekday()] if len(start) == 10 else f"D{i}")
+        d_text = str(_q_num(daytime, "condition", "text") or "")
+        pop = _q_num(daytime, "precipitation", "probability")
+        astro = d.get("astro") or {}
         forecast.append({
             "label": label,
-            "desc": text,
-            "icon": qweather_icon(text),
-            "high": _round(day.get("tempMax")),
-            "low": _round(day.get("tempMin")),
-            "precip": _round(day.get("precip")),
-            "uv": _round(day.get("uvIndex")),
+            "desc": d_text,
+            "icon": qweather_icon(d_text),
+            "high": _round(_q_num(d, "temperatureMax", "value")),
+            "low": _round(_q_num(d, "temperatureMin", "value")),
+            "precip": _round(_q_num(daytime, "precipitation", "amount", "value")),
+            "uv": _round(d.get("uvIndexMax")),
+            # v1 给的是 0~1 的小数，渲染层按百分比显示
+            "pop": _round((float(pop) * 100) if pop is not None else None),
         })
 
     air = None
     if cfg.get("weather.show_air", True):
-        air_payload = get_json(f"{host}/v7/air/now?location={location}",
-                               headers=headers, timeout=20) or {}
-        if str(air_payload.get("code")) == "200":
-            an = air_payload.get("now") or {}
-            aqi = _round(an.get("aqi"))
+        ap = get(f"/airquality/v1/current/{coord}", lang="zh") or {}
+        indexes = ap.get("indexes") or []
+        # 一个国家/地区的标准一条，国内挂墙上当然看中国标准；没有就退回列表第一条
+        pick = next((x for x in indexes
+                     if str(x.get("code", "")).lower() in ("cn", "china")), None) \
+            or (indexes[0] if indexes else None)
+        if pick:
+            aqi = _round(pick.get("aqi"))
+            pollutants = ap.get("pollutances") or ap.get("pollutants") or []
+
+            def pollutant(code):
+                for p in pollutants:
+                    if str(p.get("code", "")).lower() == code:
+                        return _round(_q_num(p, "concentration", "value"))
+                return None
+
             air = {
                 "aqi": aqi,
-                "level": str(an.get("category") or "").strip() or aqi_level(aqi)[0],
+                "level": str(pick.get("category") or "").strip() or aqi_level(aqi)[0],
                 "advice": "",
-                "pm25": _round(an.get("pm2p5")),
-                "pm10": _round(an.get("pm10")),
+                "pm25": pollutant("pm2p5"),
+                "pm10": pollutant("pm10"),
             }
 
     warning: list[dict] = []
     if cfg.get("weather.show_warning", True):
-        warn_payload = get_json(f"{host}/v7/warning/now?location={location}",
-                                headers=headers, timeout=15) or {}
-        if str(warn_payload.get("code")) == "200":
-            for item in (warn_payload.get("warning") or [])[:2]:
-                title = clean_text(item.get("title") or item.get("typeName") or "", 22)
-                if title:
-                    warning.append({"title": title,
-                                    "severity": str(item.get("severityColor") or "")})
+        wp = get(f"/weatheralert/v1/current/{coord}", lang="zh") or {}
+        for item in (wp.get("alerts") or [])[:2]:
+            event = str((item.get("eventType") or {}).get("name") or "")
+            color = str((item.get("color") or {}).get("code") or "")
+            title = clean_text(item.get("headline") or f"{color}{event}预警", 22)
+            if title:
+                warning.append({"title": title,
+                                "severity": color or str(item.get("severity") or "")})
 
-    today = daily[0] if daily else {}
+    first = forecast[0] if forecast else {}
     return {
         "source": "和风天气",
-        "obs_time": n.get("obsTime"),
-        "temp": _round(n.get("temp")),
-        "feels": _round(n.get("feelsLike")),
-        "humidity": _round(n.get("humidity")),
-        "wind_speed": _round(n.get("windSpeed")),
-        # 和风直接给蒲福风级，比拿 km/h 反算更准
-        "wind_level": _round(n.get("windScale")),
-        "wind_dir": str(n.get("windDir") or "").replace("风", "")[:2],
-        "desc": str(n.get("text") or ""),
-        "icon": qweather_icon(n.get("text")),
-        "precip": _round(n.get("precip")),
-        "pressure": _round(n.get("pressure")),
-        "vis": _round(n.get("vis")),
+        "obs_time": cur.get("forecastStartTime") or cur.get("observationTime"),
+        "temp": _round(_q_num(cur, "temperature", "value")),
+        "feels": _round(_q_num(cur, "feelsLike", "value")),
+        "humidity": _round((float(cur["humidity"]) * 100)
+                           if cur.get("humidity") is not None else None),
+        "wind_speed": _round((float(speed_ms) * 3.6) if speed_ms is not None else None),
+        "wind_level": _round(wind.get("scale")),
+        "wind_dir": _WIND_CN.get(str((wind.get("direction") or {}).get("compass", "")).lower(), ""),
+        "desc": text,
+        "icon": qweather_icon(text),
+        "precip": _round(_q_num(cur, "precipitation", "amount", "value")),
+        "pressure": _round(_q_num(cur, "pressure", "value")),
+        "vis": _round((float(vis_m) / 1000) if vis_m is not None else None),
         "is_day": 1,
-        "uv": _round(today.get("uvIndex")),
-        # 和风逐天预报只给降水量、不给降水概率，渲染层会自动换单位显示
-        "pop": None,
-        "sunrise": str(today.get("sunrise") or ""),
-        "sunset": str(today.get("sunset") or ""),
+        "uv": _round(cur.get("uvIndex")),
+        "pop": first.get("pop"),
+        "sunrise": _hhmm((day_list[0].get("astro") or {}).get("sunrise")) if day_list else "",
+        "sunset": _hhmm((day_list[0].get("astro") or {}).get("sunset")) if day_list else "",
         "forecast": forecast,
         "air": air,
         "warning": warning,

@@ -194,8 +194,31 @@ Kindle 拉图显示。
   新仓库的定时被延迟是已知现象，**要观察到第二天**；仍不触发就得换不依赖 cron 的做法。
 - 公开仓库满 60 天无活动会自动关掉 schedule —— 长期不用之后突然不更新，先查这里。
 
-## 天气源（和风为主 + Open-Meteo 兜底）
+## 天气源（和风 v1 + JWT 为主，Open-Meteo 兜底）
 
+- ⚠️ **必须用 v1，v7 正在停服**：天气预警 v7 于 **2026-10-01** 停止运行，
+  天气预报 v7 于 2027-08-01 停止。以前代码打的是 `/v7/weather/now`、
+  `/v7/weather/{3,7}d`、`/v7/air/now`、`/v7/warning/now`，2026-09-26 已全部换成 v1：
+  `/weather/v1/current/{lat}/{lon}`、`/weather/v1/daily/{lat}/{lon}?days=N`、
+  `/airquality/v1/current/{lat}/{lon}`、`/weatheralert/v1/current/{lat}/{lon}`。
+  网上教程几乎都是 v7，照抄一定失败。
+- ⚠️ **v1 的坐标在路径里且是「纬度/经度」**，而 v7 是 `location=经度,纬度` ——
+  顺序正好相反，这是从 v7 迁移时最容易犯的错（查了会静默返回别的城市的数据）。
+  v1 最多支持小数点后两位，和 `config.yaml` 为隐私做的两位取整刚好一致。
+- **每日预报必须带 `localTime=true`**：默认返回 UTC，"今天"那一格会指错日子。
+- **响应的套娃结构**：数值都在 `{value, unit}` 里，用 `_q_num()` 取；
+  `humidity` 和降水概率是 **0~1 的小数**（不是百分数）；风速是 **m/s**，
+  而渲染层和 Open-Meteo 那条路约定 km/h，转换收在数据层。
+  天气现象从 v7 的 `text/tempMax` 挪到了 `condition.text` / `daytime.condition.text`。
+- **认证走 JWT（EdDSA / Ed25519），不是 API KEY**：官方明确写了
+  「2027-01-01 起 API KEY 认证方式将受请求量限制」，JWT 不受限。
+  header `{alg:EdDSA,kid}`、payload `{iss,sub,iat,exp}`，Base64**URL** 去 padding，
+  `iat` 建议比当前时间早 30 秒（防时钟差把 token 判成未生效）。
+  五个值全在 GitHub Secrets：`QWEATHER_HOST/ISS/SUB/KID/PRIVATE_KEY`
+  （私钥支持 PEM 原文或它的一行 base64）。缺任何一个就安静回落 Open-Meteo，
+  页脚那行"天气 ××"是唯一的外部信号。
+- **创建凭据时别点「启用全部API」**：那会连热带气旋/海洋/辐照一起开，
+  这三个**不提供免费额度**，任何请求都计费。只勾 天气预报 / 天气预警 / 空气质量。
 - `sources.fetch_weather(cfg)` 是分发器：先试和风，失败/未配置则回落到 Open-Meteo，
   结果里带 `source` 字段，页脚如实显示。
 - **和风的旧域名已停服**：`devapi.qweather.com`（2026-01 停）、
