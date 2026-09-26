@@ -1846,7 +1846,11 @@ class Renderer:
         y += zone + gi
         wf = self.f(fs["warn"])
         wbox = box("warn")
-        for t in self.weather_warning()[:2 if plan.get("warn2", True) else 1]:
+        # 预警条目是 dict（title/level/…），以前直接把 dict 送进 clip_text：
+        # 没预警时这行不执行所以一直"正常"，2026-09-26 杭州出了高温预警，云端
+        # 每次出图都在 TypeError 上炸掉 —— 一有预警屏幕就停在旧图上，正好是最反着来。
+        for t in [w.get("title", "") for w in self.weather_warning()
+                  [:2 if plan.get("warn2", True) else 1]]:
             self.d.rectangle([M, y + wbox // 2 - px(6), M + px(12),
                               y + wbox // 2 + px(6)], fill=INK)
             self._ink_lt(M + px(24), y, y + wbox,
