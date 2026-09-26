@@ -64,9 +64,10 @@
   <h1>
     <span id="shotTitle">Kindle 上现在这张</span>
     <button onclick="backToLive()" id="backBtn" hidden>回到屏上真图</button>
-    <button onclick="load(true)">立刻刷新</button>
+    <button onclick="manualRefresh()" id="refreshBtn">立刻刷新</button>
   </h1>
   <img id="shot" alt="正在读取…">
+  <p class="k" id="refreshNote"></p>
   <p class="k" id="previewNote" hidden>这是**预览**（墙上那张），Kindle 上还是原来的 —— 预览不会改屏，也不发布。</p>
 </div>
 
@@ -154,6 +155,50 @@ async function loadImage() {
   document.getElementById('shot').src = `${IMG}?t=${Date.now()}`;
 }
 
+// 「立刻刷新」必须说话。它其实一直在重新拉图，但云端没出新图时画面一模一样，
+// 于是看起来像按钮坏了 —— 一个不给反馈的按钮就等于一个坏按钮。
+// 这里改成：按下先变灰写「刷新中…」，拉完用 Last-Modified 判断到底有没有新图，
+// 并把结论写在图下面。预览态下更要吭声，因为那时 loadImage() 是故意不覆盖大图的。
+let lastModified = null;
+
+async function manualRefresh() {
+  const btn = Array.from(document.querySelectorAll('button'))
+                    .find(function (b) { return /立刻刷新/.test(b.textContent); });
+  const note = document.getElementById('refreshNote');
+  if (!btn) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '刷新中…';
+  try {
+    if (previewing) {
+      note.textContent = '你现在看的是预览，所以大图没动 —— 要回屏上真图按「回到屏上真图」。';
+    } else {
+      const prev = lastModified;
+      // 读 Last-Modified 只是"顺便告诉你有没有新图"，它失败不该让整次刷新报错。
+      // （同源下正常能读到；本地 file:// 或别的域打开这页时就会失败 —— 那时
+      //  图照样刷新，只是这句话换成"读不到更新时间"。）
+      let headErr = null;
+      try {
+        const r = await fetch(IMG, { method: 'HEAD', cache: 'no-store' });
+        lastModified = r.headers.get('last-modified') || lastModified;
+      } catch (e) {
+        headErr = e.message;
+      }
+      await load(false);
+      const changed = prev && prev !== lastModified;
+      const when = lastModified ? new Date(lastModified).toLocaleString('zh-CN') : '未知';
+      note.textContent = (changed ? '已刷新：云端出了新图，' : '已刷新：云端没有新图，')
+                       + '屏上这张出图时间 ' + when
+                       + (headErr ? '（读时间失败：' + headErr + '）' : '（本机时间）。');
+    }
+  } catch (e) {
+    note.textContent = '刷新失败：' + e.message;
+  }
+  btn.disabled = false;
+  btn.textContent = original;
+}
+
+
 // 点皮肤 = 应用预览：只换这一页顶部那张大图，不写 GitHub、不改屏。
 // 之所以要这么直白地说，是因为"点了没上屏"是这里最容易误会的一件事。
 function previewSkin(name, label) {
@@ -169,6 +214,7 @@ function backToLive() {
   document.getElementById('shotTitle').textContent = 'Kindle 上现在这张';
   document.getElementById('previewNote').hidden = true;
   document.getElementById('backBtn').hidden = true;
+  document.getElementById('refreshNote').textContent = '';
   loadImage();
 }
 
