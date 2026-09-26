@@ -33,6 +33,12 @@
   details summary { cursor: pointer; color: #57534e; }
   button { font: inherit; padding: 4px 12px; border: 1px solid #d6d3d1; border-radius: 5px;
            background: #fff; cursor: pointer; }
+  .wall { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .wall figure { margin: 0; text-align: center; }
+  .wall img { width: 118px; display: block; border: 1px solid #e7e5e4; background: #fff; }
+  .wall figcaption { font-size: 12px; color: #57534e; margin-top: 4px; }
+  .wall .cur img { outline: 3px solid #16a34a; outline-offset: -3px; }
+  .wall .cur figcaption { color: #15803d; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -52,6 +58,15 @@
   <div class="card">
     <b>凭据注入</b><span class="k">（和风要这五个都在，缺一个就安静降级成 Open-Meteo）</span>
     <div id="creds" class="k">正在读取…</div>
+  </div>
+
+  <div class="card">
+    <b>皮肤墙</b><span class="k">（每套版式都用同一时刻的真灰度出图，点开放大看）</span>
+    <div id="wall" class="wall">正在读取…</div>
+    <p class="k" style="margin-bottom:0">
+      换皮肤：<a id="switch" href="#" target="_blank">去 Actions 点「Run workflow」选一套</a>
+      —— 选完约 1 分钟出图，Kindle 到下一个整点第 10 分才取，所以别当成没生效。
+    </p>
   </div>
 
   <div class="card">
@@ -125,12 +140,48 @@ async function load(showLog) {
   if (showLog) document.querySelector('details').open = true;
 }
 
+// 皮肤墙：读云端随图发布的 skins/manifest.json。
+// 用 createElement + textContent 而不是拼 innerHTML —— 内容虽然是我们自己
+// 生成的，但拼字符串这种写法一旦哪天数据里混进尖括号，页面就自己烂掉了。
+async function loadWall() {
+  const box = document.getElementById('wall');
+  document.getElementById('switch').href =
+    `https://github.com/${OWNER}/${REPO}/actions/workflows/build.yml/dispatch`;
+  try {
+    const r = await fetch(`skins/manifest.json?t=${Math.floor(Date.now() / 60000)}`);
+    if (!r.ok) throw new Error(String(r.status));
+    const m = await r.json();
+    box.textContent = '';
+    for (const s of (m.skins || [])) {
+      const fig = document.createElement('figure');
+      if (s.current) fig.className = 'cur';
+      const a = document.createElement('a');
+      a.href = `skins/${s.file}`;
+      a.target = '_blank';
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.alt = s.name;
+      img.src = `skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
+      const cap = document.createElement('figcaption');
+      cap.textContent = (s.label || s.name) + (s.current ? ' · 现在' : '')
+                      + (s.error ? ' · 出图失败' : '');
+      a.appendChild(img);
+      fig.append(a, cap);
+      box.appendChild(fig);
+    }
+  } catch (e) {
+    box.textContent = '还没有皮肤墙（云端那一步没跑，或者 screen 分支上还没发布 skins/）';
+  }
+}
+
 document.getElementById('note').textContent =
   "刷新：图 60 秒一次，日志 3 分钟一次。GitHub 的整点任务会被延迟，" +
   "「距今」超过 4 小时才算真卡住。";
 load();
+loadWall();
 setInterval(loadImage, 60000);
 setInterval(load, 180000);
+setInterval(loadWall, 1800000);
 </script>
 </body>
 </html>

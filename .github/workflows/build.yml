@@ -26,6 +26,16 @@ on:
       - "dashboard/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:          # 网页上可以手动点一次，改完版式立刻看效果
+    inputs:
+      skin:
+        description: "换皮肤：选哪套版式出图（定时任务没有这个输入，按 config.yaml 走）"
+        type: choice
+        options:
+          - 不改（用 config.yaml 里的）
+          - c1
+          - poster
+          - bands
+        default: 不改（用 config.yaml 里的）
 
 # 同一时间只跑一个：上一轮还没提交完，下一轮不要插进来
 concurrency:
@@ -76,6 +86,7 @@ jobs:
           QWEATHER_SUB: ${{ secrets.QWEATHER_SUB }}
           QWEATHER_KID: ${{ secrets.QWEATHER_KID }}
           QWEATHER_PRIVATE_KEY: ${{ secrets.QWEATHER_PRIVATE_KEY }}
+          SKIN: ${{ inputs.skin }}
         # 用 pipefail 是因为 `| tee` 会把 python 的退出码吃掉 —— 不加的话
         # 出图失败也会被当成成功，然后拿一张旧图继续挂上去，比报错更糟。
         shell: bash
@@ -90,8 +101,44 @@ jobs:
             for v in QWEATHER_HOST QWEATHER_ISS QWEATHER_SUB QWEATHER_KID QWEATHER_PRIVATE_KEY; do
               if [ -n "${!v}" ]; then echo "[凭据] ✓ $v 已注入"; else echo "[凭据] ✗ $v 没传进来"; fi
             done
-            python dashboard/generate.py --config dashboard/config.yaml
+            # 「换皮肤」：手动跑时下拉里选的那一项。
+            # 优先级：本次选的 > screen 分支上记着的那套 > config.yaml 写的。
+            # 为什么要往 screen 分支记一份：定时任务没有 inputs，只靠 config.yaml
+            # 的话换皮肤就只能管一次，下一轮又变回去。而把选择写回 config.yaml
+            # 会再触发一轮 CI（paths 里就有 dashboard/**），自己追自己；screen 是
+            # 产物分支，往它写东西没有这个问题。
+            SKIN_LIST="c1 poster bands"
+            case "$SKIN" in
+              # 下拉里选「不改」= 明确要把记住的那套清掉，回到配置文件。
+              不改*) SKIN="" ;;
+              "") SKIN="$(curl -s --max-time 15 "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/screen/skin.txt" 2>/dev/null || true)" ;;
+            esac
+            SKIN="$(printf '%s' "$SKIN" | tr -d ' \r\n')"
+            SKIN_ARGS=()
+            case " $SKIN_LIST " in
+              *" $SKIN "*) SKIN_ARGS=(--layout "$SKIN"); echo "[皮肤] 本次用版式：$SKIN" ;;
+              *) SKIN=""; echo "[皮肤] 没指定、记的是「$SKIN」或者名字不认，按 config.yaml 出图。可选：$SKIN_LIST" ;;
+            esac
+            # 这一步写的是"下一轮该用哪套"，空串就是把记忆清掉。
+            printf '%s' "$SKIN" > "$RUNNER_TEMP/skin.txt"
+            python dashboard/generate.py --config dashboard/config.yaml "${SKIN_ARGS[@]}"
           } 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # 皮肤墙：把**每一套**版式都用真数据各出一张，随图一起发出去。
+      # 为什么值得多花这几秒：换皮肤这件事在网页设计稿上判断不了 —— 掉成
+      # 8 级灰度、压到 6 寸电子墨水上，是另一回事。而且三张必须是同一时刻的
+      # 同一份数据，否则比较出来的其实是行情差异。
+      # 它失败不拦发布：墙只是选型工具，屏上那张已经生成好了。
+      - name: 生成皮肤墙
+        env:
+          TZ: Asia/Shanghai
+          QWEATHER_HOST: ${{ secrets.QWEATHER_HOST }}
+          QWEATHER_ISS: ${{ secrets.QWEATHER_ISS }}
+          QWEATHER_SUB: ${{ secrets.QWEATHER_SUB }}
+          QWEATHER_KID: ${{ secrets.QWEATHER_KID }}
+          QWEATHER_PRIVATE_KEY: ${{ secrets.QWEATHER_PRIVATE_KEY }}
+        continue-on-error: true
+        run: python dashboard/tools/skins.py --config dashboard/config.yaml --out docs/skins
 
       # 生成物放一个**专用分支 screen**，每次覆盖 —— 主分支的历史不会因为出图而变长。
       # 另一条路是"每月删一次历史"，但删完 GitHub 不一定立刻回收那些对象，
@@ -119,8 +166,15 @@ jobs:
           # 以后"云端到底出了什么图、天气用的哪个源、凭据注入没有"打开网页就看完了，
           # 不用为这个把 Kindle 拔线插电脑。它只是个静态页，不新增任何要养的东西。
           cp "$GITHUB_WORKSPACE/docs/monitor.html" index.html
-          cp "$GITHUB_WORKSPACE/docs/monitor.html" index.html
-          git add dashboard.png build.log index.html
+          # 这一轮实际用的是哪套版式，写回 screen 给下一轮看（换皮肤要能记住）。
+          cp "$RUNNER_TEMP/skin.txt" skin.txt 2>/dev/null || echo -n "" > skin.txt
+          # 皮肤墙：每套版式的真图 + 清单，Pages 上直接看
+          # （docs/skins 不存在时说明那一步失败了，跳过就行，不影响发布）
+          if [ -d "$GITHUB_WORKSPACE/docs/skins" ]; then
+            cp -r "$GITHUB_WORKSPACE/docs/skins" skins
+          fi
+          git add dashboard.png build.log index.html skin.txt
+          [ -d skins ] && git add skins
           git commit -q -m "信息屏 $(TZ=Asia/Shanghai date '+%m-%d %H:%M')"
           git push -q --force \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" screen

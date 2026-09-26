@@ -143,6 +143,9 @@ def main() -> int:
     parser.add_argument("--now", default=None,
                         help="调试用：把时间固定成 ISO 格式，例如 2026-09-18T08:30")
     parser.add_argument("--no-html", action="store_true", help="不生成网页版")
+    parser.add_argument("--layout", default=None,
+                        help="临时用哪套版式（bands / poster / c1 …），不改配置文件。"
+                             "云端「Run workflow」那个下拉就是把它传进来的。")
     args = parser.parse_args()
 
     config_path = resolve(args.config)
@@ -154,6 +157,9 @@ def main() -> int:
 
     if args.no_ai:
         cfg.set("digest.use_ai", False)
+    if args.layout:
+        cfg.set("style.layout", args.layout)
+        log(f"本次强制版式：{args.layout}（配置文件里写的被临时盖掉，不改文件）")
 
     data = collect(cfg, offline=args.offline)
 
