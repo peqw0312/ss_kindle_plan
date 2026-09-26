@@ -1390,7 +1390,7 @@ class Renderer:
     # 行盒 = 字号×1.5 取整到 8（_c1_box），间距三档：组内 gi < 块间 gb < 带间 gband。
     # fs 是字号档：整体放大/缩小只改这里（见 .workbuddy/_directions/字号三档.html）。
     C1 = dict(margin=64, day=240, temp=136, icon=104, fc_icon=96,
-              gi=8, gb=20, gband=28,
+              gi=8, gb=20, gband=24,
               fs=dict(kick=24, meta=26, lunar=32, fest=32, note=28, desc=32,
                       cell=24, cellv=26, warn=28, fc=28,
                       m_name=26, m_price=36, m_pct=26))
@@ -1861,12 +1861,15 @@ class Renderer:
         fb = box("fc")
         fc_sz = px(P["fc_icon"])
         show_desc = plan.get("fc_desc", True)
+        # 云体对齐会把多云/雷阵雨的云往上抬 0.3R，太阳芒因此伸出图标盒顶：
+        # 整排图标下让 12px，抬头字和图标之间才留得住安全距（用户 2026-09-26 反馈）。
+        icy = y + fc_sz // 2 + px(12)
         for i, day in enumerate((weather.get("forecast") or [])[:4]):
             gx = M + i * cw4 + cw4 // 2
             today = i == 0
-            self.icon(gx, y + fc_sz // 2, fc_sz, day.get("icon", "cloud"),
+            self.icon(gx, icy, fc_sz, day.get("icon", "cloud"),
                       fill=INK if today else INK_SOFT, align_cloud=True)
-            ly = y + fc_sz + px(8)
+            ly = y + fc_sz + px(20)
             self.text_centered_ink(gx, ly, ly + fb, day.get("label", ""),
                                    self.f(fs["fc"], today), INK if today else GRAY,
                                    strong=False)
@@ -1880,7 +1883,7 @@ class Renderer:
             self.text_centered_ink(gx, hy, hy + fb,
                                    f"{day.get('high')}° / {day.get('low')}°", ff, GRAY,
                                    strong=False)
-        y += fc_sz + px(8) + (3 * fb + 2 * gi if show_desc else 2 * fb + gi) \
+        y += fc_sz + px(20) + (3 * fb + 2 * gi if show_desc else 2 * fb + gi) \
             + gb + gband // 2
         self.rule(y, thickness=max(1, px(2)), color=INK, x0=M, x1=X1)
         y += gband // 2 + e[2]

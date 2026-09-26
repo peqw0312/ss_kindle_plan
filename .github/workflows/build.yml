@@ -115,7 +115,12 @@ jobs:
           # 注意里面会出现和风的 API Host（那是账号专属域名，不是凭据；
           # 没有 JWT 什么都做不了），但绝不会出现 Key 或私钥。
           cp "$RUNNER_TEMP/build.log" build.log 2>/dev/null || echo "（这次没留下日志）" > build.log
-          git add dashboard.png build.log
+          # 顺带把调试台发到 Pages 首页：https://<用户>.github.io/<仓库>/
+          # 以后"云端到底出了什么图、天气用的哪个源、凭据注入没有"打开网页就看完了，
+          # 不用为这个把 Kindle 拔线插电脑。它只是个静态页，不新增任何要养的东西。
+          cp "$GITHUB_WORKSPACE/docs/monitor.html" index.html
+          cp "$GITHUB_WORKSPACE/docs/monitor.html" index.html
+          git add dashboard.png build.log index.html
           git commit -q -m "信息屏 $(TZ=Asia/Shanghai date '+%m-%d %H:%M')"
           git push -q --force \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" screen

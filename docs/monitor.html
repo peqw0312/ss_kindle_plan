@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>信息屏调试台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  这个页面由 build.yml 复制到 screen 分支的根目录，于是它就是 Pages 的首页：
+      https://<用户>.github.io/<仓库>/
+  为什么要它：Kindle 挂在墙上，之前每次想知道"云端到底出了什么图、为什么降级"，
+  都得把设备拔线插电脑、我再去读日志。这个页面把云端那一侧的真相直接摊开——
+  图本身、上次出图时间、用的哪个天气源、五个凭据有没有注入、完整构建日志。
+  它不需要任何服务器，就是浏览器跟 GitHub 要两个公开文件。
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 20px; font: 15px/1.6 system-ui, "Segoe UI", sans-serif;
+         background: #f5f5f4; color: #1c1917; display: flex; gap: 24px; flex-wrap: wrap; }
+  h1 { font-size: 17px; margin: 0 0 12px; font-weight: 600; }
+  .screen { flex: 0 0 auto; }
+  .screen img { display: block; height: calc(100vh - 110px); max-height: 1448px;
+                border: 1px solid #d6d3d1; border-radius: 4px; background: #fff; }
+  .panel { flex: 1 1 380px; max-width: 720px; min-width: 340px; }
+  .card { background: #fff; border: 1px solid #e7e5e4; border-radius: 6px;
+          padding: 12px 14px; margin-bottom: 12px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; }
+  .k { color: #78716c; }
+  .ok  { color: #15803d; font-weight: 600; }
+  .bad { color: #b91c1c; font-weight: 600; }
+  .warn{ color: #a16207; font-weight: 600; }
+  pre { margin: 0; font: 12px/1.5 ui-monospace, Consolas, monospace;
+        white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow: auto; }
+  details summary { cursor: pointer; color: #57534e; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid #d6d3d1; border-radius: 5px;
+           background: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="screen">
+  <h1>Kindle 上现在这张 <button onclick="load(true)">立刻刷新</button></h1>
+  <img id="shot" alt="正在读取…">
+</div>
+
+<div class="panel">
+  <div class="card">
+    <div class="row"><span class="k">上次出图</span><b id="built">—</b></div>
+    <div class="row"><span class="k">距今</span><span id="age">—</span></div>
+    <div class="row"><span class="k">天气源</span><span id="src">—</span></div>
+    <div class="row"><span class="k">行情源</span><span id="qsrc">—</span></div>
+  </div>
+
+  <div class="card">
+    <b>凭据注入</b><span class="k">（和风要这五个都在，缺一个就安静降级成 Open-Meteo）</span>
+    <div id="creds" class="k">正在读取…</div>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>完整构建日志</summary>
+      <pre id="log">（还没读到）</pre>
+    </details>
+  </div>
+
+  <p class="k" id="note"></p>
+</div>
+
+<script>
+const OWNER = "peqw0312", REPO = "ss_kindle_plan", BRANCH = "screen";
+const API = `https://api.github.com/repos/${OWNER}/${REPO}`;
+const IMG = `https://${OWNER}.github.io/${REPO}/dashboard.png`;
+
+// 图片每 60 秒换一次。必须带一次性参数：Pages 边缘缓存约 10 分钟，
+// 不加的话这里看到的会比 Kindle 实际拿到的更旧，反而误导。
+async function loadImage() {
+  document.getElementById('shot').src = `${IMG}?t=${Date.now()}`;
+}
+
+async function load(showLog) {
+  await loadImage();
+  let logText = "";
+  try {
+    const r = await fetch(`${API}/contents/build.log?ref=${BRANCH}`,
+                          { headers: { Accept: "application/vnd.github.raw+json" } });
+    logText = r.ok ? await r.text() : `（读不到 build.log，HTTP ${r.status}）`;
+  } catch (e) {
+    logText = `（取 build.log 失败：${e}）`;
+  }
+  document.getElementById('log').textContent = logText;
+
+  // 天气源：日志里那行 "天气：和风天气，31°" 是最直接的证据
+  const m = logText.match(/天气[：:]\s*([^，,\n]+)/);
+  const srcEl = document.getElementById('src');
+  if (m) {
+    srcEl.textContent = m[1].trim();
+    srcEl.className = /和风/.test(m[1]) ? "ok" : "warn";
+  } else srcEl.textContent = "日志里没有";
+
+  const q = logText.match(/行情源\s*(\S+)/);
+  document.getElementById('qsrc').textContent = q ? q[1] : "—";
+
+  // 凭据注入：build.yml 每次出图前会打五行 ✓/✗。只报有没有，值永远不会出现在这里。
+  const creds = [...logText.matchAll(/\[凭据\]\s*(.)\s*(QWEATHER_\w+)/g)];
+  const box = document.getElementById('creds');
+  if (!creds.length) {
+    box.innerHTML = '<span class="warn">日志里没有凭据自检行 —— 这次构建用的还是旧版工作流</span>';
+  } else {
+    box.innerHTML = creds.map(([, flag, name]) =>
+      `<div class="${flag.trim() === '✓' ? 'ok' : 'bad'}">${flag.trim() === '✓' ? '✓' : '✗'} ${name}</div>`
+    ).join("");
+  }
+
+  // 上次出图时间：screen 分支只有一个提交（每次覆盖），它就是最近一次构建
+  try {
+    const r = await fetch(`${API}/commits?sha=${BRANCH}&per_page=1`);
+    const c = (await r.json())[0];
+    const when = new Date(c.commit.committer.date);
+    document.getElementById('built').textContent = when.toLocaleString('zh-CN');
+    const mins = Math.round((Date.now() - when) / 60000);
+    const ageEl = document.getElementById('age');
+    ageEl.textContent = mins < 60 ? `${mins} 分钟` : `${(mins / 60).toFixed(1)} 小时`;
+    // GitHub 的定时任务会被合并延迟，超过 4 小时才标红 —— 别把正常现象当故障
+    ageEl.className = mins > 240 ? "bad" : (mins > 90 ? "warn" : "ok");
+  } catch (e) { /* API 偶尔限流，留着上一次的数字就行 */ }
+
+  if (showLog) document.querySelector('details').open = true;
+}
+
+document.getElementById('note').textContent =
+  "刷新：图 60 秒一次，日志 3 分钟一次。GitHub 的整点任务会被延迟，" +
+  "「距今」超过 4 小时才算真卡住。";
+load();
+setInterval(loadImage, 60000);
+setInterval(load, 180000);
+</script>
+</body>
+</html>
