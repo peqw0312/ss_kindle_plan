@@ -98,7 +98,15 @@ log() {
     # 日志无限增长会撑爆分区，定期裁掉
     lines=$(wc -l <"$LOG" 2>/dev/null || echo 0)
     if [ "$lines" -gt "$LOG_MAX_LINES" ]; then
-        tail -n "$LOG_MAX_LINES" "$LOG" >"$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+        tail -n "$LOG_MAX_LINES" "$LOG" >"$LOG.tmp" 2>/dev/null
+        # 只有 tmp 真拿到内容才替换。以前是无条件 mv：tail 一旦失败（内存紧、
+        # 读失败都可能），mv 就把一份好日志换成 0 字节 —— 2026-09-26 整份
+        # 历史就是这么没的，而那次正好是要靠它判断 WiFi 是从哪一轮开始坏的。
+        if [ -s "$LOG.tmp" ]; then
+            mv "$LOG.tmp" "$LOG"
+        else
+            rm -f "$LOG.tmp"
+        fi
     fi
 }
 
