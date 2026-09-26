@@ -505,7 +505,7 @@ def lay_terminal(sh, d, y, extra=0):
         return y
     today = next((i for i, c in enumerate(fc) if str(c[0]).startswith("今天")), None)
     pitch = CW // n
-    mix(sh, M, y, y + 34, "FORECAST", "近日预报", 28, 26, INK, "din", 10)
+    mix(sh, M, y, y + 34, "FORECAST", "近日天气", 28, 26, INK, "din", 10)
     y += 40
     ch = 164
     for i, (day, ik, desc, hi, lo) in enumerate(fc):
@@ -567,13 +567,21 @@ def _cells(wx: dict) -> list[tuple[str, str]]:
 
 
 def _forecast(wx: dict) -> list[tuple[str, str, str, str, str]]:
-    """近日预报：(标签, 图标, 描述, 高, 低)。
+    """近日天气：(标签, 图标, 描述, 高, 低)。
 
-    出稿那版在顶上塞了一条假「昨天」，生产里**不造假数据** —— 接口给几天就画几天，
-    所以这里第一格永远是今天。真昨天要等 Open-Meteo 的 past_days 那条路接进来。
+    顶上那格「昨天」来自 `sources._fetch_yesterday()`（Open-Meteo 的真历史），
+    和风格式给不了 —— 它的时光机接口我们调不通。拿不到就没有这一格，
+    **绝不拿今天的数凑**，也绝不补一条假的（出稿那版塞的就是假昨天）。
+
+    有昨天时总数仍是四格：昨天 / 今天 / 明天 / 后天，和定稿那张一致。
     """
     out = []
-    for f in (wx.get("forecast") or [])[:4]:
+    y = wx.get("yesterday") or {}
+    if y.get("high") is not None:
+        out.append(("昨天", str(y.get("icon", "cloud")), clean_text(y.get("desc", ""), 8),
+                    f'{y["high"]}°', f'{y.get("low", "--")}°'))
+    room = 4 - len(out)
+    for f in (wx.get("forecast") or [])[:room]:
         out.append((str(f.get("label", "")), str(f.get("icon", "cloud")),
                     clean_text(f.get("desc", ""), 8),
                     f'{f.get("high", "--")}°', f'{f.get("low", "--")}°'))
@@ -606,6 +614,10 @@ def arc_data(cfg, data: dict) -> dict:
         mid.append(f"天气 {wx['source']}")
     if quotes and cfg.get("quotes.enabled", True):
         mid.append("行情 腾讯")
+    # 昨天那格是 Open-Meteo 的历史，其余天气是和风 —— 两个模型的最高温能差 1°C，
+    # 混在一行不写清楚就是拿口径差异当误差。只在真的画了这一格时才标。
+    if (wx.get("yesterday") or {}).get("high") is not None:
+        mid.append("昨天 Open-Meteo")
 
     fc = _forecast(wx)
     return {

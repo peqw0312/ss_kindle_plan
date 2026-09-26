@@ -661,16 +661,67 @@ def _fetch_weather_qweather(cfg) -> dict | None:
     }
 
 
+def _fetch_yesterday(cfg) -> dict | None:
+    """昨天的高低温 —— 只有 Open-Meteo 给得到，且**必须带着自己的来源标签**。
+
+    为什么单独一个函数：主天气源现在是和风，而和风的"时光机"这条路我们走不通
+    （`/v1/historical/weather` 返回 404，`/v7/...` 返回 400 —— 要单独开通）。
+    Open-Meteo 一个 `past_days=1` 就有真历史，免费、不要新账号。
+
+    ⚠️ 代价是**两个模型混在一行里**：和风给的是中国站点/模式口径，Open-Meteo 是
+      约 11km 的全球模式插值，同一天的最高温能差 0.5~1°C。所以这个 dict 一定带
+      `source`，版面上必须把它显示出来 —— 不说就是拿差异当误差。
+      （和风的 v7 停服时间、时光机计费口径见 .workbuddy/memory/MEMORY.md。）
+    """
+    lat = cfg.get("location.latitude")
+    lon = cfg.get("location.longitude")
+    tz = cfg.get("location.timezone", "Asia/Shanghai")
+    payload = get_json(
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        "&daily=weather_code,temperature_2m_max,temperature_2m_min"
+        f"&past_days=1&forecast_days=1&timezone={requests.utils.quote(tz)}",
+        timeout=25,
+    )
+    daily = (payload or {}).get("daily") or {}
+    times = daily.get("time") or []
+    if not times:
+        return None
+    code = (daily.get("weather_code") or [None])[0]
+    desc, icon = describe_weather(code)
+    return {
+        "label": "昨天",
+        "date": times[0],
+        "desc": desc,
+        "icon": icon,
+        "high": _round((daily.get("temperature_2m_max") or [None])[0]),
+        "low": _round((daily.get("temperature_2m_min") or [None])[0]),
+        "source": "Open-Meteo",
+    }
+
+
 def fetch_weather(cfg) -> dict | None:
     """天气入口：和风优先，拿不到就回落 Open-Meteo。"""
     provider = str(cfg.get("weather.provider", "qweather") or "").lower()
+    result = None
     if provider in ("qweather", "hefeng", "和风", "和风天气"):
         result = _fetch_weather_qweather(cfg)
-        if result:
-            return result
     elif provider and provider not in ("openmeteo", "open-meteo"):
         print(f"[sources] 不认识的天气源 {provider!r}，改用 Open-Meteo。")
-    return _fetch_weather_openmeteo(cfg)
+    if not result:
+        result = _fetch_weather_openmeteo(cfg)
+    if not result:
+        return None
+
+    # 昨天单独补：拿不到就整个字段缺省，版面自己决定少画一格，不能因为它把主天气带走。
+    try:
+        yesterday = _fetch_yesterday(cfg)
+    except Exception as exc:
+        print(f"[sources] 昨天的高低温没拿到（不影响其余天气）：{type(exc).__name__}: {exc}")
+        yesterday = None
+    if yesterday:
+        result["yesterday"] = yesterday
+    return result
 
 
 def _round(value) -> Any:
