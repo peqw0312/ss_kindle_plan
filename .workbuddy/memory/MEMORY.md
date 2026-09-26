@@ -214,9 +214,11 @@ Kindle 拉图显示。
   「2027-01-01 起 API KEY 认证方式将受请求量限制」，JWT 不受限。
   header `{alg:EdDSA,kid}`、payload `{iss,sub,iat,exp}`，Base64**URL** 去 padding，
   `iat` 建议比当前时间早 30 秒（防时钟差把 token 判成未生效）。
-  五个值全在 GitHub Secrets：`QWEATHER_HOST/ISS/SUB/KID/PRIVATE_KEY`
-  （私钥支持 PEM 原文或它的一行 base64）。缺任何一个就安静回落 Open-Meteo，
-  页脚那行"天气 ××"是唯一的外部信号。
+  五个值在 GitHub Secrets：`QWEATHER_HOST/ISS/SUB/KID/PRIVATE_KEY`
+  （私钥支持 PEM 原文或它的一行 base64）。**2026-09-26 已经建好并验证**：
+  云端出图日志 `[凭据] ✓ ×5` + `天气：和风天气`，之前那五行 ✗ 的原因是
+  仓库里一个 Secret 都没创建过（不是注入失败）。缺任何一个就安静回落
+  Open-Meteo，外部信号有两个：页脚那行"天气 ××"，以及调试台首页的五行 ✓/✗。
 - **创建凭据时别点「启用全部API」**：那会连热带气旋/海洋/辐照一起开，
   这三个**不提供免费额度**，任何请求都计费。只勾 天气预报 / 天气预警 / 空气质量。
 - `sources.fetch_weather(cfg)` 是分发器：先试和风，失败/未配置则回落到 Open-Meteo，
