@@ -8,6 +8,9 @@ CDN 缓存。这台电脑开着的时候，直接让它跑同一段 generate.py�
 第一个，电脑关着 / 服务没起时这一条几百毫秒就失败，自动落到 GitHub —— 所以这个
 服务停了，屏只是变慢，不会白屏。原来"电脑不是服务器"的约束没有被推翻。
 
+⚠️ 本机出图要有和风的 Key（环境变量 / 命令行带，仓库里不能写）。没有它时 generate.py
+会**成功**画出一张没有天气的图 —— 所以这里出图后要自检，空图不发，屏上继续是云端那张。
+
   python dashboard/serve.py                     # 监听 0.0.0.0:8731
   python dashboard/serve.py --port 8731 --poll-hint 10
 
@@ -17,8 +20,11 @@ CDN 缓存。这台电脑开着的时候，直接让它跑同一段 generate.py�
 
 路由：
   GET  /                一个极简控制台（三个按钮）
-  GET  /dashboard.png   最新那张图（no-store，设备每来一次都要拿真的）
+  GET  /dashboard.png   设备来取图。**发的是"有内容的最新那张"**：本机亲手出的、
+                        自检有数据的图优先，否则原样转发云端那张 —— 硬盘上恰好躺着
+                        一个旧文件不等于那是该上屏的那张
   GET  /status          现在这张图的时间/大小/用的哪套版式
+  GET  /state           设备上报 + 本机这一趟会发哪张 + 两者是否同一张
   POST /publish?skin=…  现场出一张（skin 省略 = 用配置文件里那套）
 
 只在家庭局域网里用：默认监听所有网卡且**没有任何鉴权** —— 同一 WiFi 下任何人都能
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -41,6 +48,8 @@ ROOT = Path(__file__).resolve().parents[1]
 IMAGE = ROOT / "docs" / "dashboard.png"
 CONFIG = ROOT / "dashboard" / "config.yaml"
 GEN = ROOT / "dashboard" / "generate.py"
+DEBUG = ROOT / "docs" / "debug.json"
+BUILT = ROOT / "docs" / "dashboard.built.json"
 
 # 和 render.py 的 Renderer.LAYOUTS 对齐。这里抄一份是因为不想为了三个名字
 # 在设备/服务两侧都依赖导入生产代码；对不上的话 generate.py 自己会退回默认
@@ -56,6 +65,11 @@ POLL = ROOT / "docs" / "poll.json"
 DEVSTATE = ROOT / "docs" / "device_state.json"
 
 
+def cksum_of_bytes(data: bytes) -> str:
+    import zlib
+    return f"{zlib.crc32(data) & 0xffffffff} {len(data)}" if data else ""
+
+
 def cksum_of(path) -> str:
     """算出和设备上 busybox cksum 一样的 "CRC 字节数"。
 
@@ -63,12 +77,133 @@ def cksum_of(path) -> str:
     输出是 "校验和 字节数"。所以本机和设备能对同一张图给出同一个串，
     调试台才敢说"屏上这张 == 我显示的这张"，而不是靠时间猜。
     """
-    import zlib
     try:
-        data = path.read_bytes()
+        return cksum_of_bytes(path.read_bytes())
     except Exception:
         return ""
-    return f"{zlib.crc32(data) & 0xffffffff} {len(data)}"
+
+
+def can_build() -> tuple[bool, str]:
+    """这台电脑能不能现场出**有天气**的图。
+
+    为什么先问这个：和风的 Key 只在 GitHub Secrets 里（仓库是公开的，不能写进配置）。
+    本机没有它时 generate.py 照样"成功"，只是画出一张没有天气的图 —— 而局域网地址排在
+    设备取图列表第一个，这张空图会盖掉云端那张好的。按钮按下去之前就该说清楚。
+    """
+    e = os.environ
+    if not (e.get("QWEATHER_HOST") or "").strip():
+        return False, "本机没有 QWEATHER_HOST"
+    jwt = all((e.get(k) or "").strip()
+              for k in ("QWEATHER_ISS", "QWEATHER_SUB", "QWEATHER_KID", "QWEATHER_PRIVATE_KEY"))
+    if jwt:
+        return True, ""
+    if (e.get("QWEATHER_KEY") or "").strip():
+        return True, ""
+    return False, "本机没有和风凭据（QWEATHER_ISS/SUB/KID/PRIVATE_KEY 或 QWEATHER_KEY，它们只在 GitHub Secrets 里）"
+
+
+def empty_reason() -> str:
+    """本机这张图是不是"没内容"。出空白图不会报错，所以只能自己查。
+
+    为什么必须查：局域网地址排在 DASHBOARD_URLS **第一个**，本机这张会盖掉云端那张
+    好的 —— 出一次没有数据的图，屏上就是一片空。真发生过。
+    """
+    try:
+        d = json.loads(DEBUG.read_text(encoding="utf-8"))
+    except Exception:
+        return "读不到 debug.json，不知道这张图里有没有数据"
+    if not (d.get("counts") or {}).get("weather"):
+        return "这张图没有天气那一块（出图时没拿到和风的数据）"
+    return ""
+
+
+def built_hash() -> str:
+    """上一次**在这个服务上**按「立刻出图」跑出来的那张是谁。"""
+    try:
+        return json.loads(BUILT.read_text(encoding="utf-8")).get("hash", "")
+    except Exception:
+        return ""
+
+
+def mark_built() -> str:
+    h = cksum_of(IMAGE)
+    try:
+        BUILT.write_text(json.dumps({"hash": h, "at": int(time.time())}), encoding="utf-8")
+    except Exception:
+        pass
+    return h
+
+
+MIRROR = {"at": 0.0, "data": b"", "lm": 0.0, "err": ""}
+MIRROR_TTL = 60.0
+
+
+def cloud_image() -> dict:
+    """云端那张（GitHub Pages），带 60 秒缓存。
+
+    用 Pages 不用 raw.githubusercontent：这台机器上 raw 那条经常直接连不通，
+    Pages 是通的 —— 和 DASHBOARD_URLS 里的顺序一致。
+    """
+    url = f"https://{PAGES_HOST}/{REPO_NAME}/dashboard.png"
+    now = time.time()
+    if MIRROR["data"] and now - MIRROR["at"] < MIRROR_TTL:
+        return MIRROR
+    try:
+        import urllib.error
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "aistatus-lan-lane"})
+        if MIRROR["data"] and MIRROR["lm"]:
+            req.add_header("If-Modified-Since",
+                           time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(MIRROR["lm"])))
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                MIRROR["data"] = r.read()
+                MIRROR["err"] = ""
+                # lm 只认云端给的 Last-Modified：没有这个头就当不知道云端那张多新，
+                # 此时本机刚出的那张优先（current_image 里 lm=0 走这个分支）
+                MIRROR["lm"] = 0.0
+                lm = r.headers.get("Last-Modified")
+                if lm:
+                    from email.utils import parsedate_to_datetime
+                    MIRROR["lm"] = parsedate_to_datetime(lm).timestamp()
+        except urllib.error.HTTPError as exc:
+            if exc.code != 304:
+                raise
+            MIRROR["err"] = ""       # 304 = 还是我缓存里那张，不是故障
+        MIRROR["at"] = now
+    except Exception as exc:
+        MIRROR["err"] = f"{type(exc).__name__}: {exc}"
+        MIRROR["at"] = now           # 失败也歇 60 秒，别每次设备来取都重连一遍
+    return MIRROR
+
+
+def current_image():
+    """这一趟给设备哪一张。返回 (bytes, 是谁, 一句话说明)。
+
+    规矩只有一条：**这张必须是"有内容的最新那张"**，而不是"本机硬盘上恰好躺着的
+    那张"。所以：
+      1. 只有这个服务亲手出的、且自检有数据的、且不比云端旧的图，才算本机这张有效；
+      2. 否则发云端那张（局域网只是加速器，内容仍以云端为准）；
+      3. 云端也取不到时，退而发本机这张，但把"可能是旧的/空的"写在说明里。
+    """
+    m = cloud_image()
+    if IMAGE.exists():
+        st = IMAGE.stat()
+        mine = cksum_of(IMAGE)
+        if mine and mine == built_hash() and st.st_size:
+            if not m["lm"] or st.st_mtime >= m["lm"]:
+                return IMAGE.read_bytes(), "本机刚出的", ""
+            if m["data"]:
+                return m["data"], "云端镜像", "本机那张虽然是在这里出的，但云端后来又出了一班更新的"
+            return IMAGE.read_bytes(), "本机那张（云端取不到）", ""
+        why = empty_reason() or "硬盘上这张不是在调试台按「立刻出图」出的，不算数"
+        if m["data"]:
+            return m["data"], "云端镜像", why
+        return IMAGE.read_bytes(), "硬盘上那张（退路）", why + f"，而云端取不到（{m['err']}）"
+    if m["data"]:
+        return m["data"], "云端镜像", "本机还没有图"
+    return b"", "", f"本机没有图，云端也取不到（{m['err']}）"
+
 BOOST_SECONDS = 30          # 调屏模式下设备每隔多少秒来取一次
 BOOST_WINDOW = 30 * 60      # 调屏持续多久，到点自己回落到平时的 10 分钟
 
@@ -100,6 +235,9 @@ def boost_now() -> int:
 
 def build(skin: str | None) -> tuple[bool, str]:
     """跑一次出图。返回 (成没成, 给人看的一句话)。"""
+    ok_creds, why = can_build()
+    if not ok_creds:
+        return False, why + " —— 出了也是一张没有天气的图，不发。要立刻换新内容请去云端那份调试台按发布。"
     cmd = [sys.executable, str(GEN), "--config", str(CONFIG), "--no-html"]
     if skin:
         cmd += ["--layout", skin]
@@ -114,7 +252,12 @@ def build(skin: str | None) -> tuple[bool, str]:
         tail = (res.stderr or res.stdout or "").strip().splitlines()[-3:]
         STATE["last_error"] = " / ".join(tail) or f"退出码 {res.returncode}"
         return False, STATE["last_error"]
+    reason = empty_reason()
+    if reason:
+        STATE["last_error"] = reason
+        return False, f"本机出了图，但**不发**：{reason}。屏上仍是云端那张好的。"
     STATE["last_error"] = None
+    mark_built()
     STATE["last_build"] = datetime.now().strftime("%H:%M:%S")
     STATE["skin"] = skin or "（配置文件的默认）"
     return True, f"已出图（{STATE['seconds']}s）"
@@ -170,11 +313,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/dashboard.png":
-            if IMAGE.exists():
-                # 必须 no-store：设备每来一次都要拿到真的，缓存一层就白改了
-                self._send(200, IMAGE.read_bytes(), "image/png")
+            # 必须 no-store：设备每来一次都要拿到真的，缓存一层就白改了
+            body, src, note = current_image()
+            if body:
+                self._send(200, body, "image/png")
             else:
-                self._send(404, b"no image yet", "text/plain")
+                self._send(404, note.encode("utf-8") or b"no image yet", "text/plain")
+                return
+            # 打一行"这一趟发的是哪张"：出过一次"屏上没信息"之后，这条日志是唯一
+            # 能事后说清设备当时拿到的是什么的东西
+            sys.stderr.write(f"  [发图] {src} {cksum_of_bytes(body)}"
+                             + (f" —— {note}" if note else "") + "\n")
             return
         if path.startswith("/skins/"):
             # 皮肤墙要 fetch manifest.json 拿清单。<img> 跨域能显示，fetch 不行 ——
@@ -204,19 +353,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, b'{"ok":true}', "application/json")
             return
         if path == "/state":
-            # 把设备上报的、本机这张的、算好的比对结果一起给调试台。
-            body = b'{"device":null}'
+            # 把设备上报的、**这一趟真正会发出去的那张**、算好的比对结果一起给调试台。
+            # 比对必须用"发出去的那张"而不是硬盘上那个文件：局域网快道可能正在发云端镜像。
+            out = {"device": None, "served": "", "hash": "", "note": "", "empty": empty_reason()}
+            ok_creds, why = can_build()
+            out["can_build"] = {"ok": ok_creds, "why": why}
+            try:
+                body_bytes, src, note = current_image()
+                out["served"], out["hash"], out["note"] = src, cksum_of_bytes(body_bytes), note
+            except Exception as exc:
+                out["note"] = f"{type(exc).__name__}: {exc}"
             try:
                 if DEVSTATE.exists():
-                    import json as _j
-                    rec = _j.loads(DEVSTATE.read_text(encoding="utf-8"))
-                    mine = cksum_of(IMAGE)
-                    rec["local_hash"] = mine
-                    rec["same"] = bool(rec.get("hash")) and rec["hash"] == mine
-                    body = _j.dumps({"device": rec}).encode()
-            except Exception as exc:
-                body = ('{"error": "%s"}' % type(exc).__name__).encode()
-            self._send(200, body, "application/json")
+                    rec = json.loads(DEVSTATE.read_text(encoding="utf-8"))
+                    rec["same"] = bool(rec.get("hash")) and rec["hash"] == out["hash"]
+                    out["device"] = rec
+            except Exception:
+                pass
+            self._send(200, json.dumps(out, ensure_ascii=False).encode(), "application/json")
             return
         if path == "/poll.json":
             # 设备每轮醒来读它：几十十字节，比取整张图便宜得多
@@ -227,6 +381,8 @@ class Handler(BaseHTTPRequestHandler):
             info = dict(STATE)
             info["image"] = str(IMAGE)
             info["exists"] = IMAGE.exists()
+            info["empty"] = empty_reason()
+            info["adopted"] = bool(IMAGE.exists()) and cksum_of(IMAGE) == built_hash()
             if IMAGE.exists():
                 st = IMAGE.stat()
                 info["mtime"] = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")

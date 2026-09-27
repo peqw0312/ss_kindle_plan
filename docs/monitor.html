@@ -96,7 +96,7 @@
   </div>
 
   <div class="card">
-    <b>凭据注入</b><span class="k">（和风要这五个都在，缺一个就安静降级成 Open-Meteo）</span>
+    <b>凭据注入</b><span class="k">（读的是云端那一轮的构建日志，不代表这台电脑；和风要这五个都在，缺任何一个天气那一块会是空的）</span>
     <div id="creds" class="k">正在读取…</div>
   </div>
 
@@ -149,12 +149,16 @@
 const OWNER = "peqw0312", REPO = "ss_kindle_plan", BRANCH = "screen";
 const API = `https://api.github.com/repos/${OWNER}/${REPO}`;
 // 默认取 Pages 那份。认出局域网服务之后会改指向本机 /dashboard.png ——
-// 本机那张是刚出的，Pages 那份可能已经旧了一班，调试时看错图比看慢更害人。
+// 那里由 serve.py 现算"当前该上屏的那一张"，和答给设备的是同一个判断，
+// 所以这台页面上看到的 == 墙上那张；调试时看错图比看慢更害人。
 let IMG = `https://${OWNER}.github.io/${REPO}/dashboard.png`;
+const CLOUD_CONSOLE = `https://${OWNER}.github.io/${REPO}/`;
 let WALL = "";   // 皮肤墙的出处：局域网模式下仍指 Pages（本机没有 skins/）
 
 // 图片每 60 秒换一次。必须带一次性参数：Pages 边缘缓存约 10 分钟，
 // 不加的话这里看到的会比 Kindle 实际拿到的更旧，反而误导。
+// 本机模式下这个地址是 /dashboard.png，由 serve.py 决定发"当前该上屏的那一张"
+// （本机刚出的，否则云端镜像）—— 所以这里看到的和设备取到的是同一次判断的结果。
 // previewing 为真时**不要**去覆盖 #shot —— 否则用户点开的预览会被自动刷新打回去，
 // 看起来就像"点了没反应"。
 let previewing = false;
@@ -466,27 +470,48 @@ async function detectLan() {
     if (typeof j.boost_until !== 'number') { loadTruth(); return; }
     LAN = j;
     IMG = "/dashboard.png";   // 墙上的图走相对路径，由本机服务代理（见 serve.py 的 /skins/）
+    loadImage();              // 立刻换过去：不然这一分钟里页面看的是 Pages 那张、设备拿的是本机那张
   } catch (e) { loadTruth(); return; }
   box.hidden = false;
   box.innerHTML = '';
   const tip = document.createElement('p');
   tip.className = 'k';
-  tip.textContent = '这是局域网控制台（本机）。下面按的是电脑直接出图，不经 GitHub、不用 token。';
+  tip.textContent = '这是局域网控制台（本机）。设备每来取一次，这里就发"当前该上屏的那一张"。';
   box.appendChild(tip);
+  let stInfo = null;
+  try { stInfo = await (await fetch(`/state?t=${Date.now()}`, { cache: 'no-store' })).json(); } catch (e) {}
+  LAN.state = stInfo;
+  const canBuild = !!(stInfo && stInfo.can_build && stInfo.can_build.ok);
   const row = document.createElement('div');
   row.className = 'pub';
-  for (const name of (SKINS.length ? SKINS : ['c1', 'arc'])) {
-    const b = document.createElement('button');
-    b.textContent = `立刻出 ${name}`;
-    b.onclick = () => lanPublish(name, b);
-    row.appendChild(b);
+  if (canBuild) {
+    for (const name of (SKINS.length ? SKINS : ['c1', 'arc'])) {
+      const b = document.createElement('button');
+      b.textContent = `立刻出 ${name}`;
+      b.onclick = () => lanPublish(name, b);
+      row.appendChild(b);
+    }
+  } else {
+    // 按下去只会失败的按钮就别摆在这儿：和风的 Key 只在 GitHub Secrets 里，本机出的
+    // 图会缺整个天气块。这种图不发（serve.py 已经把住了），所以入口也不给。
+    const p = document.createElement('p');
+    p.className = 'k';
+    p.textContent = (stInfo && stInfo.can_build && stInfo.can_build.why) || '问不到本机服务，不知道能不能出图';
+    p.appendChild(document.createElement('br'));
+    const a = document.createElement('a');
+    a.href = CLOUD_CONSOLE; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = '云端调试台';
+    p.appendChild(document.createTextNode('本机出不了有天气的图，换内容或换皮肤请用 '));
+    p.appendChild(a);
+    p.appendChild(document.createTextNode('（跑一轮 GitHub，约 1 分钟；这台电脑关着也不影响）。'));
+    box.appendChild(p);
   }
   const boost = document.createElement('button');
   boost.textContent = '进入调屏模式 30 分钟';
   boost.onclick = () => lanBoost(boost);
   row.appendChild(boost);
   box.appendChild(row);
-  document.getElementById('ghCard').hidden = true;   // 两套发布入口同时出现就是反人类
+  document.getElementById('ghCard').hidden = canBuild;
   const st = document.createElement('p');
   st.className = 'k';
   st.id = 'lanState';
@@ -505,13 +530,16 @@ async function loadTruth() {
   try {
     const r = await fetch(`/state?t=${Date.now()}`, { cache: 'no-store' });
     const j = await r.json();
+    LAN.state = j;
     const d = j.device;
-    if (!d) { el.textContent = '设备从没上报过 —— 它还没连上这台电脑（脚本没更新，或电脑当时没开）。'; return; }
+    // 先把"这台电脑会发哪一张"说清楚：快道可能正在镜像云端，而不是硬盘上那个文件
+    const served = `本机发的是${j.served || '？'}${j.note ? '：' + j.note : ''}。`;
+    if (!d) { el.textContent = served + '设备从没上报过 —— 它还没连上这台电脑（脚本没更新，或电脑当时没开）。'; return; }
     const mins = Math.max(0, Math.round((Date.now() / 1000 - (d.seen || 0)) / 60));
     const src = d.src === 'none' ? '没拿到图' : d.src;
-    if (d.ok !== '1') { el.textContent = `设备 ${mins} 分钟前上报：这一轮没拿到图（来源 ${src}）。屏上还是它上一张成功的。`; return; }
-    const same = d.same ? '和本机这张是同一张 ✓' : '和本机这张不一样 —— 屏上那张更旧或来自云端，按「立刻出图」推过去';
-    el.textContent = `${mins} 分钟前上报 · 取自 ${src} · ${same}`
+    if (d.ok !== '1') { el.textContent = served + `设备 ${mins} 分钟前上报：这一轮没拿到图（来源 ${src}）。屏上还是它上一张成功的。`; return; }
+    const same = d.same ? '和本机这张是同一张 ✓' : '和本机这张不一样 —— 屏上那张更旧，按「进入调屏模式」让它 30 秒后来取一班';
+    el.textContent = served + ` ${mins} 分钟前上报 · 取自 ${src} · ${same}`
       + (mins > 20 ? ` · ⚠️ 上报已经隔了 ${mins} 分钟，可能不准（平时每 10 分钟一班）` : '');
   } catch (e) {
     el.textContent = '问不到本机服务：' + e.message;
