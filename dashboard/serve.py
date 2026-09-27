@@ -49,6 +49,38 @@ LAYOUTS = ("c1", "arc")
 
 STATE = {"last_build": None, "last_error": None, "skin": None, "seconds": None}
 
+REPO_NAME = "ss_kindle_plan"
+PAGES_HOST = "peqw0312.github.io"
+MONITOR = ROOT / "docs" / "monitor.html"
+POLL = ROOT / "docs" / "poll.json"
+BOOST_SECONDS = 30          # 调屏模式下设备每隔多少秒来取一次
+BOOST_WINDOW = 30 * 60      # 调屏持续多久，到点自己回落到平时的 10 分钟
+
+
+def write_poll(boost_until: int) -> None:
+    """把"下一班多久来取"写成一个小文件，设备每轮醒来读它。
+
+    为什么设备只能"被问"不能"被推"：它睡着时 WiFi 射频是关的（实测 ping 不通），
+    所以没有任何办法把它叫醒。能做的只有让它下次醒来时顺手问一句"接下来睡多久" ——
+    这就是 boost 的全部机制，也解释了为什么第一次按发布仍要等到它下一班
+    （平时最多 10 分钟），之后才变成 30 秒一班。
+    """
+    import json as _json
+    try:
+        POLL.parent.mkdir(parents=True, exist_ok=True)
+        POLL.write_text(_json.dumps({"boost_until": boost_until,
+                                     "boost_seconds": BOOST_SECONDS}), encoding="utf-8")
+    except Exception as exc:
+        print(f"  [提醒] poll.json 写不出去，调屏模式不会生效：{type(exc).__name__}: {exc}")
+
+
+def boost_now() -> int:
+    """按发布 / 按调屏时调用：把高频窗口往后推 30 分钟。"""
+    import time as _t
+    until = int(_t.time()) + BOOST_WINDOW
+    write_poll(until)
+    return until
+
 
 def build(skin: str | None) -> tuple[bool, str]:
     """跑一次出图。返回 (成没成, 给人看的一句话)。"""
@@ -128,6 +160,24 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send(404, b"no image yet", "text/plain")
             return
+        if path.startswith("/skins/"):
+            # 皮肤墙要 fetch manifest.json 拿清单。<img> 跨域能显示，fetch 不行 ——
+            # GitHub Pages 不发 Access-Control-Allow-Origin。所以在这里转一道手，
+            # 页面只用相对路径，不用知道云端在哪。
+            import urllib.request
+            url = f"https://{PAGES_HOST}/{REPO_NAME}/{path[1:]}"
+            try:
+                with urllib.request.urlopen(url, timeout=15) as r:
+                    body = r.read()
+                self._send(200, body, "application/json" if path.endswith(".json") else "image/png")
+            except Exception:
+                self._send(404, b"not in the wall", "text/plain")
+            return
+        if path == "/poll.json":
+            # 设备每轮醒来读它：几十十字节，比取整张图便宜得多
+            body = POLL.read_bytes() if POLL.exists() else b'{"boost_until": 0}'
+            self._send(200, body, "application/json")
+            return
         if path == "/status":
             info = dict(STATE)
             info["image"] = str(IMAGE)
@@ -139,6 +189,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(info, ensure_ascii=False).encode(), "application/json")
             return
         if path in ("/", "/index.html"):
+            # 调试台本体在这里也发一份：同一台机器、同一个协议，才谈得上"点一下推给
+            # 设备"。Pages 那份是 HTTPS，去调 HTTP 的局域网接口会被浏览器按混合内容
+            # 拦掉 —— 这是浏览器的规则，不是我们写法能绕的。
+            if MONITOR.exists():
+                self._send(200, MONITOR.read_bytes(), "text/html; charset=utf-8")
+                return
             step = getattr(self.server, "poll_hint", "?")
             buttons = "".join(
                 f'<button onclick="pub(\'{l}\')">发布 {l}</button>' for l in LAYOUTS)
@@ -148,7 +204,13 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:
-        if urlparse(self.path).path != "/publish":
+        u = urlparse(self.path)
+        if u.path == "/boost":
+            until = boost_now()
+            self._send(200, ('{"ok": true, "boost_until": %d, "every_seconds": %d}'
+                             % (until, BOOST_SECONDS)).encode(), "application/json")
+            return
+        if u.path != "/publish":
             self._send(404, b"not found", "text/plain")
             return
         q = parse_qs(urlparse(self.path).query)
@@ -157,7 +219,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps({"ok": False, "msg": f"不认识的版式「{skin}」，可选：{' / '.join(LAYOUTS)}"}).encode(),
                        "application/json")
             return
+        boost_now()          # 按发布 = 我在改东西，顺手把调屏窗口续上
         ok, msg = build(skin or None)
+        msg += f"（已进调屏模式：每 {BOOST_SECONDS} 秒一班，30 分钟后自动回落）"
         self._send(200, json.dumps({"ok": ok, "msg": msg}, ensure_ascii=False).encode(),
                    "application/json")
 

@@ -509,6 +509,28 @@ plan_next_image() {
         echo $((pnow + LOW_BATTERY_INTERVAL))
         return 0
     fi
+    # 调屏模式：局域网服务那边按过「发布」之后的半小时内，改成每 30 秒一班。
+    #
+    # 为什么只能"醒来问一句"而不是"被叫醒"：设备睡着时 WiFi 射频是关的
+    # （实测从电脑 ping 它 100% 丢包），所以世上没有任何推送能进到它体内。
+    # 能做的只有让它下次醒来时顺手读一个小文件，改短下一班的间隔 ——
+    # 代价是第一次按发布仍要等到下一班（平时最多 10 分钟），之后就快。
+    # 安静期不 boost：凌晨没人调屏，别为此多醒 60 次。
+    if [ -n "$LAN_POLL_URL" ]; then
+        ph=$(( ( $(now_minutes) / 60 ) % 24 ))
+        if ! in_quiet_hour "$ph"; then
+            poll=$(curl -s --max-time 3 "$LAN_POLL_URL" 2>/dev/null)
+            buntil=$(printf '%s' "$poll" | sed -n 's/.*"boost_until": *\([0-9][0-9]*\).*/\1/p')
+            bsec=$(printf '%s' "$poll" | sed -n 's/.*"boost_seconds": *\([0-9][0-9]*\).*/\1/p')
+            if [ -n "$buntil" ] && [ "$buntil" -gt "$pnow" ]; then
+                # 5 秒是地板：防止那边写出个 0 或者 1 把它变成疯狂轮询
+                [ "${bsec:-30}" -ge 5 ] && bsec=$bsec || bsec=30
+                log "调屏模式：每 ${bsec}s 一班（还剩约 $(( (buntil - pnow) / 60 )) 分钟）"
+                echo $((pnow + bsec))
+                return 0
+            fi
+        fi
+    fi
     sched=$(next_image_from_headers)
     if [ -n "$sched" ]; then
         log "按云端时刻表，约 $(( (sched - pnow) / 60 )) 分钟后再来取"

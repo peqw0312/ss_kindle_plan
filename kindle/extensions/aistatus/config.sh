@@ -32,6 +32,16 @@
 DASHBOARD_URLS="http://192.168.31.158:8731/dashboard.png https://peqw0312.github.io/ss_kindle_plan/dashboard.png https://cdn.jsdelivr.net/gh/peqw0312/ss_kindle_plan@screen/dashboard.png https://raw.githubusercontent.com/peqw0312/ss_kindle_plan/screen/dashboard.png"
 
 # ② 整图刷新节奏 -----------------------------------------------------------
+#    调屏模式的开关在哪：电脑上 dashboard/serve.py 起起来之后，它在
+#    http://<电脑IP>:8731/poll.json 里写"接下来该多久来取一次"。
+#    每轮醒来多读这一个小文件（几十十字节，比取整张图便宜得多）：
+#      · 那边按过「发布」→ 之后 30 分钟改成每 30 秒一班，改完立刻看得见
+#      · 没人按 / 电脑没开 → 一切照旧，按下面的 FETCH_EVERY_MINUTES 走
+#    留空 = 完全不查，一节都不多醒。
+#    ⚠️ 它只能"设备醒了顺便问"，做不到"把设备叫醒"：睡着时射频是关的。
+#      所以第一次按发布，最坏还是要等一班（现在 = 10 分钟）。
+LAN_POLL_URL="http://192.168.31.158:8731/poll.json"
+
 #    规则只有一条：每隔 FETCH_EVERY_MINUTES 分钟取一次，并且落在固定的时间格上。
 #    格子怎么算：从零点起，凡是满足 (该分钟数 - FETCH_ALIGN_MINUTE) 能被
 #    FETCH_EVERY_MINUTES 整除的时刻，就是一个档位。所以
