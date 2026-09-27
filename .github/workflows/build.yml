@@ -81,8 +81,12 @@ jobs:
       # 没发布），404 不算错，所以 || true。
       - name: 取回昨天的存档
         run: |
-          curl -s --max-time 20 -o docs/yesterday.json             "https://raw.githubusercontent.com/${{ github.repository }}/screen/yesterday.json" || true
-          head -c 120 docs/yesterday.json 2>/dev/null || echo "（没有存档，这一轮不画昨天）"
+          # -f 很关键：没有它，404 的那段 "404: Not Found" 会被当成文件内容存下来，
+          # 下一句 JSON 解析就炸（第一次跑必然这样，实测踩过）。
+          curl -sf --max-time 20 -o docs/yesterday.json             "https://raw.githubusercontent.com/${{ github.repository }}/screen/yesterday.json" || true
+          # 空文件也当没有：curl 失败时可能留下 0 字节的壳
+          [ -s docs/yesterday.json ] || rm -f docs/yesterday.json
+          cat docs/yesterday.json 2>/dev/null || echo "（没有存档，这一轮不画昨天）"
 
       - name: 生成信息屏图片
         env:
