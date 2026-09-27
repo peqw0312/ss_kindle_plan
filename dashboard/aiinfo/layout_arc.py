@@ -408,7 +408,7 @@ def lay_terminal(sh, d, y, extra=0):
     sh.d.rectangle([M + hz + 6, y, X1, y + 57], fill=INK)
     mix(sh, M + hz + 26, y, y + 58, "INFO TERMINAL", "信息终端",
         32, 30, PAPER, "din", 14)
-    rt = "NODE 07 / LINPING"
+    rt = "HZ 0571 / LINPING"
     sh.ink(X1 - 22, y, y + 58, rt, sh.f.mono(26, True), PAPER, anchor="rt")
     y += 58 + 12 + e[0]
 
@@ -623,7 +623,10 @@ def arc_data(cfg, data: dict) -> dict:
     fc = _forecast(wx)
     return {
         "place": clean_text(cfg.get("location.name", ""), 20),
-        "sn": (f'SN {data["generated_at"].strftime("%Y-%m%d")}-07'
+        # 日期 = 出图当天（真实）；后面的数字 = 实际画了几格近日天气。
+        # ⚠️ 它**不是**"一天刷几次"—— 云端每小时、设备每 10 分钟，写 4x 会被
+        #   读成刷新频率。设计稿注释里那句"一天刷 4 次是真的"已经过时了。
+        "sn": (f'SN {data["generated_at"].strftime("%Y-%m-%d")}'
                f' // DAILY CYCLE {len(fc)}x'),
         "cal": {
             "month": f"{cal.solar_year} 年 {cal.solar_month} 月",
