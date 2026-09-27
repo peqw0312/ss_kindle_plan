@@ -569,9 +569,9 @@ def _cells(wx: dict) -> list[tuple[str, str]]:
 def _forecast(wx: dict) -> list[tuple[str, str, str, str, str]]:
     """近日天气：(标签, 图标, 描述, 高, 低)。
 
-    顶上那格「昨天」来自 `sources._fetch_yesterday()`（Open-Meteo 的真历史），
-    和风格式给不了 —— 它的时光机接口我们调不通。拿不到就没有这一格，
-    **绝不拿今天的数凑**，也绝不补一条假的（出稿那版塞的就是假昨天）。
+    顶上那格「昨天」来自 generate.py 的**和风自存档**（前一天最后一次预报的
+    日极值）—— 和风的时光机接口我们调不通，而混用 Open-Meteo 会被当成口径误差。
+    读不到存档就没有这一格，**绝不拿今天的数凑**（出稿那版塞的是假昨天，已废弃）。
 
     有昨天时总数仍是四格：昨天 / 今天 / 明天 / 后天，和定稿那张一致。
     """
@@ -614,10 +614,11 @@ def arc_data(cfg, data: dict) -> dict:
         mid.append(f"天气 {wx['source']}")
     if quotes and cfg.get("quotes.enabled", True):
         mid.append("行情 腾讯")
-    # 昨天那格是 Open-Meteo 的历史，其余天气是和风 —— 两个模型的最高温能差 1°C，
-    # 混在一行不写清楚就是拿口径差异当误差。只在真的画了这一格时才标。
-    if (wx.get("yesterday") or {}).get("high") is not None:
-        mid.append("昨天 Open-Meteo")
+    # 昨天那格是"前一天最后一次预报的日极值"（和风自己的存档），不是气象站实测。
+    # 屏幕上只写着「昨天 34°/23°」看不出区别，所以在这里说明来源。只在真画了才标。
+    y = wx.get("yesterday") or {}
+    if y.get("high") is not None:
+        mid.append(y.get("source") or "昨天 和风存档")
 
     fc = _forecast(wx)
     return {

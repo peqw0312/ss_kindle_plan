@@ -97,7 +97,8 @@ def probe_weather(cfg: Config) -> None:
         print("     · ⚠️ 旧域名 devapi/api.qweather.com 已停止服务，"
               "必须用控制台给的专属 Host")
 
-    show("Open-Meteo", sources._fetch_weather_openmeteo)
+    # Open-Meteo 这条路 2026-09-26 已从生产里删掉（只留和风一个源）。
+    # 想再比较两个源：git log 找 sources.py 里删它的那次提交，把函数取回来。
 
     print("  -- 最终采用（屏幕上会显示这个）--")
     w = show("实际取用", sources.fetch_weather)

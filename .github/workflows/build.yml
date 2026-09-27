@@ -76,6 +76,14 @@ jobs:
       - name: 装依赖（只有 Pillow / PyYAML / requests）
         run: pip install -r dashboard/requirements.txt
 
+      # 昨天是自己攒的存档（和风的时光机调不通），所以每轮先从 screen 分支取回
+      # 上一轮那份，出图时把今天的写回去。取不到是正常的（第一天、或那次出图失败
+      # 没发布），404 不算错，所以 || true。
+      - name: 取回昨天的存档
+        run: |
+          curl -s --max-time 20 -o docs/yesterday.json             "https://raw.githubusercontent.com/${{ github.repository }}/screen/yesterday.json" || true
+          head -c 120 docs/yesterday.json 2>/dev/null || echo "（没有存档，这一轮不画昨天）"
+
       - name: 生成信息屏图片
         env:
           TZ: Asia/Shanghai
@@ -180,6 +188,10 @@ jobs:
           # Bahnschrift / Impact / Consolas，那是 Windows 才有的字，Linux runner
           # 上跑出来是另一副样子。要重新出稿就在本机跑 design_kept.py。
           cp -r "$GITHUB_WORKSPACE/docs/kept" kept
+          # 今天的高低温存档，下一轮拿它当昨天。写不出去就不带，下一轮少一格
+          [ -f "$GITHUB_WORKSPACE/docs/yesterday.json" ] &&
+            cp "$GITHUB_WORKSPACE/docs/yesterday.json" yesterday.json
+          git add yesterday.json 2>/dev/null || true
           git add dashboard.png build.log index.html skin.txt kept
           [ -d skins ] && git add skins
           git commit -q -m "信息屏 $(TZ=Asia/Shanghai date '+%m-%d %H:%M')"

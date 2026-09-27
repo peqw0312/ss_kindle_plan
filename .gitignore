@@ -42,3 +42,7 @@ docs/dashboard.png
 
 # 皮肤墙的输出：每套版式一张真图，云端每次出图重新生成，不进仓库
 docs/skins/
+
+# 昨天自存档：随图发布在 screen 分支，主分支不跟踪
+# 两边各存一份会出现屏上的昨天和墙上不一样，只留一份在 screen
+docs/yesterday.json

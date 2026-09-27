@@ -270,118 +270,6 @@ def effective_wind_level(weather: dict) -> int | None:
     return out
 
 
-def _fetch_weather_openmeteo(cfg) -> dict | None:
-    """Open-Meteo：免 Key、不限量，作为和风天气的兜底。
-
-    给的是全球数值模式（约 11km 网格）插到你那个坐标的值，空气质量来自
-    CAMS 全球模式。对国内来说精度不如和风，但永远不会因为没配 Key 而空着。
-    """
-    lat = cfg.get("location.latitude")
-    lon = cfg.get("location.longitude")
-    tz = cfg.get("location.timezone", "Asia/Shanghai")
-    days = int(cfg.get("weather.days", 4))
-    if lat is None or lon is None:
-        print("[sources] 未配置经纬度，跳过天气。")
-        return None
-
-    payload = get_json(
-        "https://api.open-meteo.com/v1/forecast"
-        f"?latitude={lat}&longitude={lon}"
-        "&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
-        "is_day,precipitation,weather_code,wind_speed_10m,wind_direction_10m,"
-        "surface_pressure"
-        "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
-        "precipitation_probability_max,uv_index_max,sunrise,sunset"
-        f"&timezone={requests.utils.quote(tz)}&forecast_days={max(2, min(days, 7))}",
-        timeout=25,
-    )
-    if not payload or "current" not in payload:
-        return None
-
-    cur = payload.get("current", {})
-    daily = payload.get("daily", {})
-    desc, icon = describe_weather(cur.get("weather_code"))
-
-    # 风向角度 -> 中文方位
-    deg = cur.get("wind_direction_10m")
-    compass = ["北", "东北", "东", "东南", "南", "西南", "西", "西北"]
-    wind_dir = compass[int((float(deg) + 22.5) % 360 // 45)] if deg is not None else ""
-
-    forecast = []
-    times = daily.get("time", []) or []
-    for i in range(len(times)):
-        d_code = (daily.get("weather_code") or [None])[i] if i < len(daily.get("weather_code") or []) else None
-        d_desc, d_icon = describe_weather(d_code)
-        try:
-            date_obj = datetime.strptime(times[i], "%Y-%m-%d")
-            label = "今天" if i == 0 else ("明天" if i == 1 else WEEKDAYS[date_obj.weekday()])
-        except Exception:
-            label = f"D{i}"
-        forecast.append({
-            "label": label,
-            "desc": d_desc,
-            "icon": d_icon,
-            "high": _round(daily.get("temperature_2m_max", [None] * (i + 1))[i]),
-            "low": _round(daily.get("temperature_2m_min", [None] * (i + 1))[i]),
-            "pop": _round(daily.get("precipitation_probability_max", [None] * (i + 1))[i]),
-        })
-
-    result = {
-        "source": "Open-Meteo",
-        "temp": _round(cur.get("temperature_2m")),
-        "feels": _round(cur.get("apparent_temperature")),
-        "humidity": _round(cur.get("relative_humidity_2m")),
-        "wind_speed": _round(cur.get("wind_speed_10m")),
-        "wind_dir": wind_dir,
-        "precip": _round(cur.get("precipitation")),
-        "pressure": _round(cur.get("surface_pressure")),
-        "is_day": cur.get("is_day", 1),
-        "desc": desc,
-        "icon": icon,
-        "code": cur.get("weather_code"),
-        "uv": _round((daily.get("uv_index_max") or [None])[0]),
-        "pop": _round((daily.get("precipitation_probability_max") or [None])[0]),
-        "sunrise": _hhmm((daily.get("sunrise") or [None])[0]),
-        "sunset": _hhmm((daily.get("sunset") or [None])[0]),
-        "forecast": forecast,
-        "air": None,
-    }
-
-    if cfg.get("weather.show_air", True):
-        result["air"] = fetch_air_quality(lat, lon, tz)
-    # 把 km/h 就地换成风级，下游（渲染层、自检工具）就不必各自换算一遍了
-    result["wind_level"] = effective_wind_level(result)
-    return result
-
-
-def fetch_air_quality(lat, lon, tz: str) -> dict | None:
-    payload = get_json(
-        "https://air-quality-api.open-meteo.com/v1/air-quality"
-        f"?latitude={lat}&longitude={lon}&current=pm2_5,pm10"
-        f"&timezone={requests.utils.quote(tz)}",
-        timeout=20,
-    )
-    if not payload or "current" not in payload:
-        return None
-    cur = payload["current"]
-    # 故意不再请求 us_aqi：那是美国 EPA 的数，配不上中国的分级文字（见 china_aqi）
-    aqi = china_aqi(cur.get("pm2_5"), cur.get("pm10"))
-    level, advice = aqi_level(aqi)
-    return {
-        "aqi": _round(aqi),
-        "level": level,
-        "advice": advice,
-        "pm25": _round(cur.get("pm2_5")),
-        "pm10": _round(cur.get("pm10")),
-    }
-
-
-# --- 和风天气（QWeather）-----------------------------------------------------
-
-#: 天气现象文本 -> 图标类别。顺序有意义：先判「雷」「雪」再判「雨」，
-#: 否则「雷阵雨」会被划成雨、「雨夹雪」会被划成雨。
-#: 雨这一档再按强度细分：滴数就是强度（小雨 1 滴 / 中雨 2 滴 / 大雨 3 滴 /
-#: 暴雨 3 大滴），所以「大暴雨」必须排在「暴雨」和「大雨」前面。
 QWEATHER_ICONS: tuple[tuple[str, str], ...] = (
     ("雷", "thunder"),
     ("雪", "snow"),
@@ -527,12 +415,12 @@ def _fetch_weather_qweather(cfg) -> dict | None:
     creds = _qweather_creds(cfg)
     host = creds["host"]
     if not host:
-        print("[sources] 没配和风天气的 API Host，天气回落到 Open-Meteo。")
+        print("[sources] 没配和风天气的 API Host —— 本项目没有第二个源，天气这一整块会是空的。")
         return None
     headers, params = _qweather_auth(creds)
     if headers is None:
         print("[sources] 和风没有可用凭据（JWT 需要 QWEATHER_PRIVATE_KEY / _ISS / "
-              "_SUB / _KID，或者改用 QWEATHER_KEY），回落到 Open-Meteo。")
+              "_SUB / _KID）—— 天气这一整块会是空的。")
         return None
 
     lat = cfg.get("location.latitude")
@@ -550,7 +438,7 @@ def _fetch_weather_qweather(cfg) -> dict | None:
     cur = get(f"/weather/v1/current/{coord}", lang="zh")
     if not isinstance(cur, dict) or "temperature" not in cur:
         err = (cur or {}).get("error") if isinstance(cur, dict) else None
-        print(f"[sources] 和风实况失败（{err or '无响应'}），回落到 Open-Meteo。")
+        print(f"[sources] 和风实况失败（{err or '无响应'}）—— 天气这一整块会是空的。")
         return None
 
     wind = cur.get("wind") or {}
@@ -661,66 +549,23 @@ def _fetch_weather_qweather(cfg) -> dict | None:
     }
 
 
-def _fetch_yesterday(cfg) -> dict | None:
-    """昨天的高低温 —— 只有 Open-Meteo 给得到，且**必须带着自己的来源标签**。
-
-    为什么单独一个函数：主天气源现在是和风，而和风的"时光机"这条路我们走不通
-    （`/v1/historical/weather` 返回 404，`/v7/...` 返回 400 —— 要单独开通）。
-    Open-Meteo 一个 `past_days=1` 就有真历史，免费、不要新账号。
-
-    ⚠️ 代价是**两个模型混在一行里**：和风给的是中国站点/模式口径，Open-Meteo 是
-      约 11km 的全球模式插值，同一天的最高温能差 0.5~1°C。所以这个 dict 一定带
-      `source`，版面上必须把它显示出来 —— 不说就是拿差异当误差。
-      （和风的 v7 停服时间、时光机计费口径见 .workbuddy/memory/MEMORY.md。）
-    """
-    lat = cfg.get("location.latitude")
-    lon = cfg.get("location.longitude")
-    tz = cfg.get("location.timezone", "Asia/Shanghai")
-    payload = get_json(
-        "https://api.open-meteo.com/v1/forecast"
-        f"?latitude={lat}&longitude={lon}"
-        "&daily=weather_code,temperature_2m_max,temperature_2m_min"
-        f"&past_days=1&forecast_days=1&timezone={requests.utils.quote(tz)}",
-        timeout=25,
-    )
-    daily = (payload or {}).get("daily") or {}
-    times = daily.get("time") or []
-    if not times:
-        return None
-    code = (daily.get("weather_code") or [None])[0]
-    desc, icon = describe_weather(code)
-    return {
-        "label": "昨天",
-        "date": times[0],
-        "desc": desc,
-        "icon": icon,
-        "high": _round((daily.get("temperature_2m_max") or [None])[0]),
-        "low": _round((daily.get("temperature_2m_min") or [None])[0]),
-        "source": "Open-Meteo",
-    }
-
-
 def fetch_weather(cfg) -> dict | None:
-    """天气入口：和风优先，拿不到就回落 Open-Meteo。"""
-    provider = str(cfg.get("weather.provider", "qweather") or "").lower()
-    result = None
-    if provider in ("qweather", "hefeng", "和风", "和风天气"):
-        result = _fetch_weather_qweather(cfg)
-    elif provider and provider not in ("openmeteo", "open-meteo"):
-        print(f"[sources] 不认识的天气源 {provider!r}，改用 Open-Meteo。")
-    if not result:
-        result = _fetch_weather_openmeteo(cfg)
-    if not result:
-        return None
+    """天气入口：**只有和风一个源**。
 
-    # 昨天单独补：拿不到就整个字段缺省，版面自己决定少画一格，不能因为它把主天气带走。
-    try:
-        yesterday = _fetch_yesterday(cfg)
-    except Exception as exc:
-        print(f"[sources] 昨天的高低温没拿到（不影响其余天气）：{type(exc).__name__}: {exc}")
-        yesterday = None
-    if yesterday:
-        result["yesterday"] = yesterday
+    以前这里在和风失败时会回落 Open-Meteo，昨天那格也走 Open-Meteo。2026-09-26
+    用户决定只留一个源 —— 理由成立：两个模型混在同一屏上，差的那 0.5~1°C 会被
+    当成"数据不准"再查一晚上（今天已经为口径差异查过一次了）。
+
+    ⚠️ 代价要说明白：**没有兜底了**。和风挂掉、配额超了或者凭据过期时，屏上
+      天气那一整块是空的。所以失败必须说话 —— 上面那几处 print 就是干这个的，
+      别把它改回静默回落。
+    """
+    provider = str(cfg.get("weather.provider", "qweather") or "").lower()
+    if provider and provider not in ("qweather", "hefeng", "和风", "和风天气"):
+        print(f"[sources] weather.provider={provider!r} 不认识，本项目只用和风。")
+    result = _fetch_weather_qweather(cfg)
+    if result:
+        result["source"] = "和风天气"
     return result
 
 

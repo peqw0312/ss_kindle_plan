@@ -41,6 +41,8 @@ def main() -> int:
     ap.add_argument("-c", "--config", default="dashboard/config.yaml")
     ap.add_argument("--out", default="docs/skins", help="图片写到哪个目录")
     ap.add_argument("--offline", action="store_true", help="不联网，用假数据只比版式")
+    ap.add_argument("--yesterday", default="docs/yesterday.json",
+                    help="昨天存档，和 generate.py 用同一个文件")
     args = ap.parse_args()
 
     safe_stdout()
@@ -54,6 +56,9 @@ def main() -> int:
     # 取数一次。各版式共用它，比出来的差异才只有版式这一项。
     data = generate.collect(cfg, offline=args.offline)
     data["calendar"] = calendar_info(data["generated_at"])
+    # 和 generate.py 走同一个昨天存档。不接的话墙上四格里少一格而屏上有 ——
+    # 这种预览和成品不一致最难查，因为两边都没报错。
+    generate.yesterday_archive(data, args.yesterday, data["generated_at"])
 
     # 版式名单以 Renderer.LAYOUTS 为准。这里留兜底常量是因为 render.py 正被另一个人
     # 同时改、我那半个改动还没提交 —— 等它落地就把这两行删掉。

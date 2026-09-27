@@ -133,6 +133,61 @@ def write_html(path: Path, cfg: Config, size: tuple[int, int], refresh: int = 60
     path.write_text(html, encoding="utf-8")
 
 
+def yesterday_archive(data: dict, path, today) -> None:
+    """把「昨天」接回来，但只用和风自己的数 —— 自己攒存档。
+
+    为什么绕这一圈：屏上想要昨天那一格，而和风的时光机我们**调不通**
+    （`/v1/historical/weather` 404；`/v7/historical/weather` 说 location 参数无效，
+    换成 start/days 又报缺参数）。以前那格走 Open-Meteo，代价是一行里混两个模型，
+    差的那 0.5~1°C 会被当成"数据不准"再查一晚上。
+
+    做法：云端每次出图把**当天**和风给的最高/最低写进一个小文件，随图发布到
+    screen 分支；下一轮先读回来，日期不是今天的那份就是昨天。
+
+    ⚠️ 它是"前一天最后一次预报的日极值"，不是气象站实测。这个区别必须写在这，
+      因为屏幕上只写着「昨天 34°/23°」，看不出区别。
+      没有这个文件（第一天、或云端从没跑过）就没有这一格 —— 绝不拿今天凑。
+    """
+    from pathlib import Path
+    import json as _json
+    path = Path(path)
+    wx = data.get("weather")
+    today_iso = today.strftime("%Y-%m-%d")
+
+    if wx:
+        try:
+            saved = _json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+        except Exception as exc:
+            print(f"[昨天] 存档读不了，这一格就不画：{type(exc).__name__}: {exc}")
+            saved = None
+        if isinstance(saved, dict) and saved.get("date") and saved["date"] != today_iso:
+            wx["yesterday"] = {
+                "label": "昨天", "date": saved["date"],
+                "desc": saved.get("desc", ""), "icon": saved.get("icon", "cloud"),
+                "high": saved.get("high"), "low": saved.get("low"),
+                "source": "和风天气（前一天存档）",
+            }
+
+    if not wx:
+        return
+    # 存今天：优先用逐日预报里"今天"那一格（它才是日极值），拿不到就用实况兜一下
+    day = next((f for f in (wx.get("forecast") or []) if f.get("label") == "今天"), None)
+    if day is None and (wx.get("forecast") or []):
+        day = wx["forecast"][0]
+    high = (day or {}).get("high")
+    low = (day or {}).get("low")
+    if high is None:
+        return
+    payload = {"date": today_iso, "high": high, "low": low,
+               "icon": (day or {}).get("icon", wx.get("icon", "cloud")),
+               "desc": (day or {}).get("desc", wx.get("desc", ""))}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        print(f"[昨天] 存档写不出去（下一轮就没有这一格）：{type(exc).__name__}: {exc}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="生成 Kindle AI 信息屏图片")
     parser.add_argument("-c", "--config", default="dashboard/config.yaml",
@@ -143,6 +198,9 @@ def main() -> int:
     parser.add_argument("--now", default=None,
                         help="调试用：把时间固定成 ISO 格式，例如 2026-09-18T08:30")
     parser.add_argument("--no-html", action="store_true", help="不生成网页版")
+    parser.add_argument("--yesterday", default="docs/yesterday.json",
+                        help="「昨天」存档文件：先读它（日期不是今天就当昨天用），"
+                             "再把今天的高低温写回它。云端把它发布到 screen 分支。")
     parser.add_argument("--layout", default=None,
                         help="临时用哪套版式（bands / poster / c1 …），不改配置文件。"
                              "云端「Run workflow」那个下拉就是把它传进来的。")
@@ -165,6 +223,9 @@ def main() -> int:
 
     if args.now:
         data["generated_at"] = datetime.fromisoformat(args.now)
+
+    # 「昨天」的读与写都必须在时间定稿之后 —— 判断"是不是今天那份存档"用的就是它
+    yesterday_archive(data, args.yesterday, data["generated_at"])
 
     # 日历是纯本地推算（不联网、不依赖任何库），放在时间定稿之后算
     data["calendar"] = calendar_info(data["generated_at"])
