@@ -42,6 +42,11 @@ DASHBOARD_URLS="http://192.168.31.158:8731/dashboard.png https://peqw0312.github
 #      所以第一次按发布，最坏还是要等一班（现在 = 10 分钟）。
 LAN_POLL_URL="http://192.168.31.158:8731/poll.json"
 
+#    反向那条：把"屏上现在贴的是哪张"报给同一个服务，调试台才敢保证
+#    它显示的就是墙上那张。留空 = 不上报，调试台会老实显示"设备状态未知"，
+#    而不是拿一张它猜的图糊弄你。
+LAN_REPORT_URL="http://192.168.31.158:8731/report"
+
 #    规则只有一条：每隔 FETCH_EVERY_MINUTES 分钟取一次，并且落在固定的时间格上。
 #    格子怎么算：从零点起，凡是满足 (该分钟数 - FETCH_ALIGN_MINUTE) 能被
 #    FETCH_EVERY_MINUTES 整除的时刻，就是一个档位。所以

@@ -73,6 +73,11 @@
 
 <div class="panel">
   <div class="card">
+    <b>屏上现在这张</b>
+    <p class="k" id="truth">正在问设备…</p>
+  </div>
+
+  <div class="card">
     <div class="row"><span class="k">上次出图</span><b id="built">—</b></div>
     <div class="row"><span class="k">距今</span><span id="age">—</span></div>
     <div class="row"><span class="k">下次上屏</span><b id="next">—</b></div>
@@ -109,7 +114,7 @@
     </p>
   </div>
 
-  <div class="card">
+  <div class="card" id="ghCard">
     <b>发布</b><span class="k">（把选中的那套设为屏上用的；约 1 分钟出图，屏上下一个整点第 10 分取）</span>
     <div class="pub">
       <span>屏上现在：<b id="liveSkin">读取中…</b></span>
@@ -456,12 +461,12 @@ async function detectLan() {
   const box = document.getElementById('lanBox');
   try {
     const r = await fetch(`/poll.json?t=${Date.now()}`, { cache: 'no-store' });
-    if (!r.ok) return;
+    if (!r.ok) { loadTruth(); return; }
     const j = await r.json();
-    if (typeof j.boost_until !== 'number') return;
+    if (typeof j.boost_until !== 'number') { loadTruth(); return; }
     LAN = j;
     IMG = "/dashboard.png";   // 墙上的图走相对路径，由本机服务代理（见 serve.py 的 /skins/）
-  } catch (e) { return; }
+  } catch (e) { loadTruth(); return; }
   box.hidden = false;
   box.innerHTML = '';
   const tip = document.createElement('p');
@@ -481,11 +486,36 @@ async function detectLan() {
   boost.onclick = () => lanBoost(boost);
   row.appendChild(boost);
   box.appendChild(row);
+  document.getElementById('ghCard').hidden = true;   // 两套发布入口同时出现就是反人类
   const st = document.createElement('p');
   st.className = 'k';
   st.id = 'lanState';
   box.appendChild(st);
   lanState();
+  loadTruth();     // 成功分支也要问一次：上面几条 return 只覆盖了失败的情况
+}
+
+async function loadTruth() {
+  const el = document.getElementById('truth');
+  if (!LAN) {
+    el.textContent = '这台是 Pages 那份，问不到设备（设备只肯把状态报给局域网里的电脑）。'
+      + '要"看到的就等于墙上那张"，请开 http://192.168.31.158:8731/。';
+    return;
+  }
+  try {
+    const r = await fetch(`/state?t=${Date.now()}`, { cache: 'no-store' });
+    const j = await r.json();
+    const d = j.device;
+    if (!d) { el.textContent = '设备从没上报过 —— 它还没连上这台电脑（脚本没更新，或电脑当时没开）。'; return; }
+    const mins = Math.max(0, Math.round((Date.now() / 1000 - (d.seen || 0)) / 60));
+    const src = d.src === 'none' ? '没拿到图' : d.src;
+    if (d.ok !== '1') { el.textContent = `设备 ${mins} 分钟前上报：这一轮没拿到图（来源 ${src}）。屏上还是它上一张成功的。`; return; }
+    const same = d.same ? '和本机这张是同一张 ✓' : '和本机这张不一样 —— 屏上那张更旧或来自云端，按「立刻出图」推过去';
+    el.textContent = `${mins} 分钟前上报 · 取自 ${src} · ${same}`
+      + (mins > 20 ? ` · ⚠️ 上报已经隔了 ${mins} 分钟，可能不准（平时每 10 分钟一班）` : '');
+  } catch (e) {
+    el.textContent = '问不到本机服务：' + e.message;
+  }
 }
 
 function lanState() {
@@ -508,7 +538,7 @@ async function lanPublish(skin, btn) {
     if (el) el.textContent = (j.ok ? '✓ ' : '✗ ') + j.msg;
     if (j.ok) { loadImage(); setTimeout(loadWall, 3000); }
     fetch(`/poll.json?t=${Date.now()}`, { cache: 'no-store' })
-      .then(x => x.json()).then(j2 => { LAN = j2; lanState(); });
+      .then(x => x.json()).then(j2 => { LAN = j2; lanState(); loadTruth(); });
   } catch (e) {
     if (el) el.textContent = '请求失败：' + e.message;
   }
@@ -534,7 +564,8 @@ load();
 loadWall();
 loadSchedule();
 loadLiveSkin();
-detectLan();
+detectLan();          // 它自己会在结论出来后调 loadTruth，别在这里抢跑
+setInterval(loadTruth, 60000);
 setInterval(lanState, 60000);
 setInterval(loadImage, 60000);
 setInterval(load, 180000);

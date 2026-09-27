@@ -371,6 +371,21 @@ file_hash() {
     cksum "$1" 2>/dev/null | cut -d' ' -f1,2
 }
 
+# 告诉局域网服务"屏上现在贴的是哪张"。调试台只有拿到这个才敢说自己看到的
+# 等于墙上看到的 —— 否则它只能猜：设备可能显示的是本机那张，而 Pages 上是
+# 云端那张，两边不一样（2026-09-26 把局域网放到取图第一位之后就是这么骗人的）。
+#
+# 上报失败不影响任何事：服务没起就是不可达，静默跳过。但一定要带 hash，
+# 让那边能判断"屏上这张"和"它以为该显示的那张"到底是不是同一张。
+report_state() {
+    [ -z "$LAN_REPORT_URL" ] && return 0
+    h=$(file_hash "$IMG")
+    curl -s --max-time 5 \
+         "${LAN_REPORT_URL}?ok=${1}&hash=${h:-none}&src=${2:-none}&at=$(now_epoch)" \
+         >/dev/null 2>&1
+    return 0
+}
+
 show_image() {
     # 局部刷新快且不闪屏，但会累积残影；贴时钟的那 60 次/小时更是明显，
     # 所以整图这一下默认每次都全刷（FULL_REFRESH_EVERY=1），等于每小时清一次鬼影。
@@ -617,6 +632,7 @@ refresh() {
             consecutive_failures=0
             log "这段的休眠：真睡 ${sleep_ok} 次共 ${sleep_ok_seconds}s · 提前醒 ${sleep_short} 次 · 弹回 ${sleep_bounce} 次"
             sleep_ok=0; sleep_ok_seconds=0; sleep_short=0; sleep_bounce=0
+            report_state 1 "$host"        # 屏上没变，但"我还活着、贴的是这张"要说
             [ "$WIFI_SLEEP" = "1" ] && wifi_off
             return 0
         fi
@@ -638,6 +654,7 @@ refresh() {
             show_image
             show_status_line
         fi
+        report_state 1 "$host"
         [ "$WIFI_SLEEP" = "1" ] && wifi_off
         return 0
     fi
@@ -650,6 +667,7 @@ refresh() {
         # 备用图盖上去了，屏上内容不再是刚才那张 —— 作废。
         screen_hash=""
     fi
+    report_state 0 ""
     rm -f "$TMP" 2>/dev/null
     [ "$WIFI_SLEEP" = "1" ] && wifi_off
     return 1

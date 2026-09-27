@@ -49,3 +49,6 @@ docs/yesterday.json
 
 # 局域网调屏模式的临时状态（serve.py 写、设备读），不是产物也不是配置
 docs/poll.json
+
+# 设备上报的屏上状态（serve.py 写、调试台读），运行时状态不进仓库
+docs/device_state.json

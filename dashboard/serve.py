@@ -53,6 +53,22 @@ REPO_NAME = "ss_kindle_plan"
 PAGES_HOST = "peqw0312.github.io"
 MONITOR = ROOT / "docs" / "monitor.html"
 POLL = ROOT / "docs" / "poll.json"
+DEVSTATE = ROOT / "docs" / "device_state.json"
+
+
+def cksum_of(path) -> str:
+    """算出和设备上 busybox cksum 一样的 "CRC 字节数"。
+
+    为什么能对上：cksum 用的就是 POSIX CRC-32（zlib.crc32 同一个多项式），
+    输出是 "校验和 字节数"。所以本机和设备能对同一张图给出同一个串，
+    调试台才敢说"屏上这张 == 我显示的这张"，而不是靠时间猜。
+    """
+    import zlib
+    try:
+        data = path.read_bytes()
+    except Exception:
+        return ""
+    return f"{zlib.crc32(data) & 0xffffffff} {len(data)}"
 BOOST_SECONDS = 30          # 调屏模式下设备每隔多少秒来取一次
 BOOST_WINDOW = 30 * 60      # 调屏持续多久，到点自己回落到平时的 10 分钟
 
@@ -172,6 +188,35 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, body, "application/json" if path.endswith(".json") else "image/png")
             except Exception:
                 self._send(404, b"not in the wall", "text/plain")
+            return
+        if path == "/report":
+            # 设备上报"屏上现在贴的是哪张"。GET 带参数就行：设备那边只有 curl，
+            # 让它发 POST + JSON 是给自己找麻烦。
+            from urllib.parse import parse_qs as _pq
+            q = _pq(urlparse(self.path).query)
+            rec = {k: (q.get(k) or [""])[0] for k in ("ok", "hash", "src", "at")}
+            import time as _t
+            rec["seen"] = int(_t.time())
+            try:
+                DEVSTATE.write_text(json.dumps(rec), encoding="utf-8")
+            except Exception:
+                pass
+            self._send(200, b'{"ok":true}', "application/json")
+            return
+        if path == "/state":
+            # 把设备上报的、本机这张的、算好的比对结果一起给调试台。
+            body = b'{"device":null}'
+            try:
+                if DEVSTATE.exists():
+                    import json as _j
+                    rec = _j.loads(DEVSTATE.read_text(encoding="utf-8"))
+                    mine = cksum_of(IMAGE)
+                    rec["local_hash"] = mine
+                    rec["same"] = bool(rec.get("hash")) and rec["hash"] == mine
+                    body = _j.dumps({"device": rec}).encode()
+            except Exception as exc:
+                body = ('{"error": "%s"}' % type(exc).__name__).encode()
+            self._send(200, body, "application/json")
             return
         if path == "/poll.json":
             # 设备每轮醒来读它：几十十字节，比取整张图便宜得多
