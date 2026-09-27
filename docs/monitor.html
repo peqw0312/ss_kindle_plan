@@ -259,9 +259,11 @@ function nextSlots(n) {
     if ((m - S.align) % S.every !== 0) continue;
     if (quietHour(Math.floor(m / 60) % 24)) continue;
     const when = new Date(now);
-    when.setHours(0, S.align, 0, 0);
+    when.setHours(0, 0, 0, 0);
+    // 分是 m 自己算出来的，不能钉在相位上：每 60 分钟一班时两者恰好重合，
+    // 一旦改成每 10 分钟，:10 :20 :30 就全被画成 :10，距今还跟着算成负数。
     when.setDate(when.getDate() + Math.floor(m / 1440));
-    when.setHours(Math.floor(m / 60) % 24);
+    when.setHours(Math.floor(m / 60) % 24, m % 60, 0, 0);
     out.push(when);
   }
   return out;
@@ -533,7 +535,7 @@ async function loadTruth() {
     LAN.state = j;
     const d = j.device;
     // 先把"这台电脑会发哪一张"说清楚：快道可能正在镜像云端，而不是硬盘上那个文件
-    const served = `本机发的是${j.served || '？'}${j.note ? '：' + j.note : ''}。`;
+    const served = `本机发的是${j.served || '？'}${j.note ? ' —— ' + j.note : ''}。`;
     if (!d) { el.textContent = served + '设备从没上报过 —— 它还没连上这台电脑（脚本没更新，或电脑当时没开）。'; return; }
     const mins = Math.max(0, Math.round((Date.now() / 1000 - (d.seen || 0)) / 60));
     const src = d.src === 'none' ? '没拿到图' : d.src;

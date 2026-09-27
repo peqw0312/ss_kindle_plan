@@ -196,7 +196,7 @@ def current_image():
             if m["data"]:
                 return m["data"], "云端镜像", "本机那张虽然是在这里出的，但云端后来又出了一班更新的"
             return IMAGE.read_bytes(), "本机那张（云端取不到）", ""
-        why = empty_reason() or "硬盘上这张不是在调试台按「立刻出图」出的，不算数"
+        why = "硬盘上那张不发：" + (empty_reason() or "它不是在调试台按「立刻出图」出的")
         if m["data"]:
             return m["data"], "云端镜像", why
         return IMAGE.read_bytes(), "硬盘上那张（退路）", why + f"，而云端取不到（{m['err']}）"
@@ -308,33 +308,41 @@ class Handler(BaseHTTPRequestHandler):
         if no_store:
             self.send_header("cache-control", "no-store")
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionResetError, BrokenPipeError):
+            # 对方中途挂断不是故障：浏览器换页会掐掉没看完的图，设备 curl 超时会直接走人。
+            # 不接住它，socketserver 会替每个这样的请求打一整页 traceback，
+            # 日志里真正有用的那几行就被埋了。
+            pass
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/dashboard.png":
             # 必须 no-store：设备每来一次都要拿到真的，缓存一层就白改了
             body, src, note = current_image()
+            # 先记下"这一趟发的是哪张"再发：客户端中途挂断（浏览器换页很常见）时，
+            # 写在发送之后的那行就丢了，而这条日志是事后唯一说得清设备拿到什么的东西
+            sys.stderr.write(f"  [发图] {src} {cksum_of_bytes(body)}"
+                             + (f" —— {note}" if note else "") + "\n")
             if body:
                 self._send(200, body, "image/png")
             else:
                 self._send(404, note.encode("utf-8") or b"no image yet", "text/plain")
-                return
-            # 打一行"这一趟发的是哪张"：出过一次"屏上没信息"之后，这条日志是唯一
-            # 能事后说清设备当时拿到的是什么的东西
-            sys.stderr.write(f"  [发图] {src} {cksum_of_bytes(body)}"
-                             + (f" —— {note}" if note else "") + "\n")
             return
-        if path.startswith("/skins/"):
-            # 皮肤墙要 fetch manifest.json 拿清单。<img> 跨域能显示，fetch 不行 ——
-            # GitHub Pages 不发 Access-Control-Allow-Origin。所以在这里转一道手，
-            # 页面只用相对路径，不用知道云端在哪。
+        if path.startswith("/skins/") or path == "/skin.txt":
+            # 皮肤墙要 fetch manifest.json 拿清单，页面也要读 skin.txt 才知道
+            # 屏上现在挂的是哪套。<img> 跨域能显示，fetch 不行 —— GitHub Pages
+            # 不发 Access-Control-Allow-Origin。所以在这里转一道手，页面只用相对路径。
             import urllib.request
-            url = f"https://{PAGES_HOST}/{REPO_NAME}/{path[1:]}"
+            url = f"https://{PAGES_HOST}/{REPO_NAME}{path}"
             try:
                 with urllib.request.urlopen(url, timeout=15) as r:
                     body = r.read()
-                self._send(200, body, "application/json" if path.endswith(".json") else "image/png")
+                ctype = ("application/json" if path.endswith(".json")
+                         else "text/plain; charset=utf-8" if path.endswith(".txt")
+                         else "image/png")
+                self._send(200, body, ctype)
             except Exception:
                 self._send(404, b"not in the wall", "text/plain")
             return
