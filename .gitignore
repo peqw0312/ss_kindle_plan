@@ -46,3 +46,6 @@ docs/skins/
 # 昨天自存档：随图发布在 screen 分支，主分支不跟踪
 # 两边各存一份会出现屏上的昨天和墙上不一样，只留一份在 screen
 docs/yesterday.json
+
+# 局域网调屏模式的临时状态（serve.py 写、设备读），不是产物也不是配置
+docs/poll.json
