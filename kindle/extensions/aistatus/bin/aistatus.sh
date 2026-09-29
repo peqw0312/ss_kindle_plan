@@ -840,7 +840,7 @@ init() {
     # 悄悄退化成普通 sleep 循环 —— 设备全程醒着，掉电极快，而日志上完全看不出来。
     # 以前就是这样：一晚掉 60%，分不清是"醒得太勤"还是"根本没睡"。
     if [ "$USE_RTC_SLEEP" != "1" ]; then
-        log "休眠：USE_RTC_SLEEP=0，设备不会真睡（很费电）"
+        log "休眠：USE_RTC_SLEEP=0 → 不真睡，普通 sleep（这是长期插电源的配法）"
     elif [ -z "$RTC" ]; then
         log "休眠：!! 两代唤醒节点都没有（新 wakealarm / 老 wakeup_enable 都试过）"
         log "      → 会退化成普通 sleep，设备全程醒着。这就是掉电元凶，不是时钟"
