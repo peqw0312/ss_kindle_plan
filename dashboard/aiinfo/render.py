@@ -25,7 +25,7 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFilter
 
 from .fonts import book_for
-from .sources import clean_text, crypto_source_label, effective_wind_level
+from .sources import clean_text, crypto_source_label, effective_wind_level, quotes_source_label
 
 # 墨色梯度：只保留这几档，保证在 16 级灰度屏上有足够反差
 INK = 0
@@ -1377,8 +1377,9 @@ class Renderer:
         bits = [f"更新 {self.generated_at.strftime('%m-%d %H:%M')}", f"Kindle {label}"]
         if weather.get("source"):
             bits.append(f"天气 {weather['source']}")
-        if self.data.get("quotes"):
-            bits.append("行情 腾讯")
+        qs = quotes_source_label(self.data.get("quotes") or [])
+        if qs:
+            bits.append(f"行情 {qs}")
         # 涨跌图例从行情标题挪到页脚，信息不丢，行情那块省下一整行
         bits.append("实心=涨 空心=跌")
         font = self.f(self.FS_FOOT)
@@ -1686,8 +1687,9 @@ class Renderer:
         mid = [f"Kindle {label}"]
         if weather.get("source"):
             mid.append(f"天气 {weather['source']}")
-        if self.data.get("quotes") and self.cfg.get("quotes.enabled", True):
-            mid.append("行情 腾讯")
+        qs = quotes_source_label(self.data.get("quotes") or [])
+        if qs and self.cfg.get("quotes.enabled", True):
+            mid.append(f"行情 {qs}")
         self.text((M, y + self.px(14)),
                   f"更新 {self.generated_at.strftime('%m-%d %H:%M')}", font, GRAY)
         self.text((X1, y + self.px(14)), "实心=涨 空心=跌", font, GRAY, anchor="ra")

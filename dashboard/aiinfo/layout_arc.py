@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 
-from .sources import clean_text
+from .sources import clean_text, quotes_source_label
 
 # 注：DEVICE_LABELS 在 render.py 里，而 render.py 会 import 本模块 —— 那里改成
 # 函数内延迟导入，绕开循环。别把它挪进来当参数传，那等于把设备名硬编码两遍。
@@ -612,8 +612,11 @@ def arc_data(cfg, data: dict) -> dict:
     mid = [f"Kindle {label}"]
     if wx.get("source"):
         mid.append(f"天气 {wx['source']}")
-    if quotes and cfg.get("quotes.enabled", True):
-        mid.append("行情 腾讯")
+    # 注意传**原始** quotes：上面那个局部变量已经变成 (名字, 价格, 涨跌) 的元组列表，
+    # 里面没有 provider。
+    qs = quotes_source_label(data.get("quotes") or [])
+    if qs and cfg.get("quotes.enabled", True):
+        mid.append(f"行情 {qs}")
     # 昨天那格是"前一天最后一次预报的日极值"（和风自己的存档），不是气象站实测。
     # 屏幕上只写着「昨天 34°/23°」看不出区别，所以在这里说明来源。只在真画了才标。
     y = wx.get("yesterday") or {}

@@ -968,6 +968,10 @@ def fetch_quotes(cfg) -> list[dict]:
             print(f"[sources] 行情源 {provider_name} 异常：{exc}")
             got = {}
         results.update(got)
+        for item in got.values():
+            # 指数/股票也要记下用的是哪家：页脚那行"行情 谁"以前是写死的"腾讯"，
+            # 换成新浪之后屏幕还在说腾讯 —— 标错来源比不标更害人。
+            item.setdefault("provider", provider_name)
         print(f"[sources] 行情源 {provider_name}：命中 {len(got)}/{len(missing)}")
 
     # --- 加密合约：Bitget -> HTX ---
@@ -998,6 +1002,19 @@ def fetch_quotes(cfg) -> list[dict]:
             item["name"] = display_names[norm]
         out.append(item)
     return out
+
+
+#: 屏幕上写得好看的行情来源名。页脚那行以前写死"腾讯"，换源之后会说谎。
+QUOTE_SOURCE_LABELS = {"tencent": "腾讯", "sina": "新浪", "yahoo": "Yahoo"}
+
+
+def quotes_source_label(quotes: list[dict]) -> str:
+    """本轮指数/股票价格实际用的哪家，用来在屏幕上如实标注。"""
+    used = {q.get("provider") for q in (quotes or [])
+            if not q.get("is_crypto") and q.get("provider")}
+    if not used:
+        return ""
+    return " + ".join(sorted(QUOTE_SOURCE_LABELS.get(u, u) for u in used))
 
 
 def crypto_source_label(quotes: list[dict]) -> str:
