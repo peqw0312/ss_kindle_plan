@@ -379,7 +379,11 @@ file_hash() {
 # 让那边能判断"屏上这张"和"它以为该显示的那张"到底是不是同一张。
 report_state() {
     [ -z "$LAN_REPORT_URL" ] && return 0
-    h=$(file_hash "$IMG")
+    # hash 是 cksum 的输出，形状是 "校验和 空格 字节数"。这个**空格必须转成 %20**：
+    # 裸空格会把 HTTP 请求行折断成 "GET /report?...hash=1105677263" + "49915&src=…
+    # HTTP/1.1"，服务器按非法请求直接回 400 —— 连访问日志都不写，所以症状是
+    # "上报无声无息地不存在"，而取图、读 poll.json 全正常（它们没有空格）。
+    h=$(file_hash "$IMG" | sed "s/ /%20/")
     curl -s --max-time 5 \
          "${LAN_REPORT_URL}?ok=${1}&hash=${h:-none}&src=${2:-none}&at=$(now_epoch)" \
          >/dev/null 2>&1

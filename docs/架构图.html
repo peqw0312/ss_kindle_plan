@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>这块屏是怎么连起来的 · 项目结构图</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px 22px 60px;
+    font: 15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    color: #1c1917; background: #fafaf9;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: .5px; }
+  .sub { color: #57534e; margin: 0 0 26px; font-size: 14px; }
+  h2 { font-size: 17px; margin: 38px 0 12px; padding-bottom: 5px; border-bottom: 2px solid #e7e5e4; }
+  h2 span { font-weight: 400; color: #78716c; font-size: 13px; margin-left: 8px; }
+
+  /* 三块地方 */
+  .zones { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .zones { grid-template-columns: 1fr; } }
+  .zone { background: #fff; border: 1px solid #d6d3d1; border-top: 4px solid #1c1917;
+          border-radius: 4px; padding: 14px 16px 16px; }
+  .zone.cloud { border-top-color: #78716c; }
+  .zone.dev   { border-top-color: #292524; }
+  .zone h3 { font-size: 15px; margin: 0 0 2px; }
+  .zone .where { font: 12px/1.5 ui-monospace,Consolas,monospace; color: #78716c; margin-bottom: 12px; }
+  .item { border-top: 1px dashed #e7e5e4; padding: 8px 0 7px; }
+  .item b { font: 13px/1.5 ui-monospace,Consolas,monospace; display: block; }
+  .item i { font-style: normal; color: #57534e; font-size: 13px; display: block; line-height: 1.5; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 3px;
+         background: #1c1917; color: #fff; margin-left: 6px; vertical-align: 1px; }
+  .tag.grey { background: #a8a29e; }
+  .tag.line { background: #fff; color: #44403c; border: 1px solid #d6d3d1; }
+
+  /* 箭头 */
+  .flow { margin: 6px 0 0; }
+  .row { display: grid; grid-template-columns: 190px 44px 1fr; gap: 10px; align-items: baseline;
+         padding: 9px 0; border-top: 1px solid #e7e5e4; }
+  .row:last-child { border-bottom: 1px solid #e7e5e4; }
+  .from { font: 13px/1.5 ui-monospace,Consolas,monospace; color: #44403c; }
+  .arr { text-align: center; color: #1c1917; font-size: 16px; line-height: 1.2; }
+  .to b { font: 13px/1.5 ui-monospace,Consolas,monospace; }
+  .to i { font-style: normal; color: #57534e; font-size: 13px; display: block; }
+  .row.dim .arr, .row.dim .from { color: #a8a29e; }
+
+  /* 两条路 */
+  .paths { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .paths { grid-template-columns: 1fr; } }
+  .path { background: #fff; border: 1px solid #d6d3d1; border-radius: 4px; padding: 14px 16px; }
+  .path h3 { margin: 0 0 10px; font-size: 15px; }
+  ol.steps { margin: 0; padding-left: 22px; }
+  ol.steps li { margin-bottom: 7px; font-size: 13.5px; line-height: 1.55; }
+  ol.steps code, .item code, .to code, td code, p code {
+    font: 12.5px ui-monospace,Consolas,monospace; background: #f5f5f4; padding: 1px 4px; border-radius: 3px; }
+
+  /* 规矩 */
+  .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .rules { grid-template-columns: 1fr; } }
+  .rule { background: #1c1917; color: #fafaf9; border-radius: 4px; padding: 13px 15px; }
+  .rule b { display: block; font-size: 14px; margin-bottom: 4px; }
+  .rule i { font-style: normal; font-size: 13px; color: #d6d3d1; line-height: 1.55; display: block; }
+
+  table { border-collapse: collapse; width: 100%; background: #fff; font-size: 13.5px; }
+  th, td { border: 1px solid #e7e5e4; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f5f5f4; font-size: 12.5px; letter-spacing: .3px; }
+  td:first-child { width: 30%; }
+
+  ul.tight { margin: 6px 0 0; padding-left: 20px; }
+  ul.tight li { margin-bottom: 5px; font-size: 13.5px; }
+  .ok { color: #166534; font-weight: 600; }
+  .no { color: #991b1b; font-weight: 600; }
+  .pend { color: #92400e; font-weight: 600; }
+  .foot { margin-top: 40px; padding-top: 12px; border-top: 1px solid #d6d3d1;
+          font: 12px ui-monospace,Consolas,monospace; color: #78716c; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>这块屏是怎么连起来的</h1>
+<p class="sub">三块地方：<b>你的电脑</b>（可以关）· <b>GitHub</b>（免费，替你常驻）· <b>Kindle</b>（长期插电源，每分钟来取一次）。
+图里每一条箭头都写着它多久走一次。改于 2026-09-29。</p>
+
+<h2>一、三块地方里各有什么<span>点开的文件名就是仓库里的路径</span></h2>
+<div class="zones">
+
+  <div class="zone">
+    <h3>你的电脑</h3>
+    <div class="where">C:\Users\peqw0\WorkBuddy\Kindle Plan<br>局域网 IP 192.168.31.158</div>
+    <div class="item"><b>dashboard/generate.py<span class="tag">出图</span></b>
+      <i>抓数据 + 画成 1072×1448 的 8 级灰度 PNG。云端和本机跑的是<b>同一段代码</b>，所以两边出的图长得一样。</i></div>
+    <div class="item"><b>dashboard/serve.py<span class="tag">局域网快道</span></b>
+      <i>常驻在 :8731。三件事：① 设备来取图时答"当前该上屏的那一张"；② 用 <code>/poll.json</code> 告诉它下一班多久来；③ 收它上报的"屏上贴的是哪张"。</i></div>
+    <div class="item"><b>docs/monitor.html<span class="tag line">调试台</span></b>
+      <i>同一份页面有两个入口：电脑上 <code>http://192.168.31.158:8731/</code>（能按按钮），和云端 Pages 那份（要 GitHub token）。它会自己认在哪。</i></div>
+    <div class="item"><b>dashboard/config.yaml</b>
+      <i>画什么：城市、自选股、版式、字体。<b>里面绝不写 Key</b>（仓库是公开的）。</i></div>
+    <div class="item"><b>.workbuddy/_qweather_local.env<span class="tag grey">不进仓库</span></b>
+      <i>这台电脑自己的和风凭据（四个 ID + 私钥文件的路径）。有了它，本机 1.1 秒就能出一张真图。</i></div>
+    <div class="item"><b>kindle/extensions/aistatus/</b>
+      <i>要拷进屏里的那些文件。<b>改这里 = 要插一次线</b>，见下面第四节。</i></div>
+  </div>
+
+  <div class="zone cloud">
+    <h3>GitHub（免费那部分）</h3>
+    <div class="where">peqw0312 / ss_kindle_plan</div>
+    <div class="item"><b>main 分支</b>
+      <i>源码和配置。你 push 上去的东西都在这儿。</i></div>
+    <div class="item"><b>.github/workflows/build.yml<span class="tag">云端出图</span></b>
+      <i>三种触发：定时（实测 1～3 小时才跑一次，GitHub 会攒）、push（改了 dashboard/ 或 docs/ 就跑）、手动（网页上选版式）。</i></div>
+    <div class="item"><b>Settings → Secrets ×5<span class="tag grey">不进仓库</span></b>
+      <i>和风的 HOST / ISS / SUB / KID / PRIVATE_KEY。只有 Actions 运行时能看见。</i></div>
+    <div class="item"><b>screen 分支<span class="tag line">只放产物</span></b>
+      <i>每次出图<b>整个覆盖</b>，历史永远一个提交：<code>dashboard.png</code>、<code>build.log</code>（凭据 ✓/✗ 和每一步耗时）、<code>index.html</code>（调试台）、<code>skin.txt</code>（屏上现在哪套版式）、<code>skins/</code>（皮肤墙）、<code>kept/</code>（设计定稿）、<code>yesterday.json</code>（昨天存档）。</i></div>
+    <div class="item"><b>Pages</b>
+      <i>= screen 分支的根，自动部署。<br><code>https://peqw0312.github.io/ss_kindle_plan/</code></i></div>
+  </div>
+
+  <div class="zone dev">
+    <h3>Kindle Paperwhite 3</h3>
+    <div class="where">越狱 5.16.2 · /mnt/us = 插线时看到的 D: 盘</div>
+    <div class="item"><b>bin/aistatus.sh<span class="tag">主循环</span></b>
+      <i>每分钟一班：读 <code>poll.json</code> → 按顺序试四个地址取图 → 和屏上那张比校验和，<b>一样就不重绘</b> → 贴屏 → 上报自己贴的是哪张。不睡觉（长期插电源）。</i></div>
+    <div class="item"><b>config.sh</b>
+      <i>几个旋钮：<code>DASHBOARD_URLS</code>（局域网排第一）、<code>FETCH_EVERY_MINUTES=1</code>、<code>USE_RTC_SLEEP=0</code>、安静期已关。<b>只在启动时读一次</b>，改完必须重启脚本才生效。</i></div>
+    <div class="item"><b>fallback.png</b>
+      <i>开机 / 断网时贴的那张。<b>它以前是张空图</b>，2026-09-29 换成真的了 —— 这是"屏上没信息"的第二条路。</i></div>
+    <div class="item"><b>aistatus.log</b>
+      <i>它干了什么的流水账。插着线时在 D: 里能读到，但<b>追加的行不一定立刻可见</b>（屏那边有缓存）。</i></div>
+    <div class="item"><b>menu.json<span class="tag line">KUAL 菜单</span></b>
+      <i>屏上点的「启动信息屏 / 停止信息屏」就在这儿。<b>插着线的时候点不了</b>。</i></div>
+  </div>
+</div>
+
+<h2>二、箭头：谁找谁，多久一次<span>实线 = 一直在走；灰虚线 = 只在电脑开着时走</span></h2>
+<div class="flow">
+
+  <div class="row">
+    <div class="from">和风天气 API</div><div class="arr">→</div>
+    <div class="to"><b>GitHub Actions / 你的电脑</b>
+      <i>天气、空气质量、<b>灾害预警</b>。免费额度 5 万次/月；预警是免费的，热带气旋和海洋不是（所以凭据别勾"全部 API"）。</i></div>
+  </div>
+
+  <div class="row">
+    <div class="from">腾讯 / 新浪行情</div><div class="arr">→</div>
+    <div class="to"><b>GitHub Actions / 你的电脑</b>
+      <i>纳指100、标普500、上证指数。国内直连，不用 Key。</i></div>
+  </div>
+
+  <div class="row">
+    <div class="from">generate.py</div><div class="arr">→</div>
+    <div class="to"><b>screen 分支</b>
+      <i>出一张就<b>强制覆盖</b>一次。主分支不跟踪 <code>docs/dashboard.png</code>，那只是本机预览。</i></div>
+  </div>
+
+  <div class="row">
+    <div class="from">screen 分支</div><div class="arr">→</div>
+    <div class="to"><b>GitHub Pages</b>
+      <i>自动部署，约 30 秒。屏取的就是这个地址。</i></div>
+  </div>
+
+  <div class="row">
+    <div class="from">Kindle（每分钟）</div><div class="arr">→</div>
+    <div class="to"><b>192.168.31.158:8731/dashboard.png</b>
+      <i>取图列表里的<b>第一个</b>。电脑开着时它答"当前该上屏的那一张"；电脑关了几百毫秒就失败，自动落到下一条。<b>所以快道坏了屏不会白，只是慢。</b></i></div>
+  </div>
+
+  <div class="row">
+    <div class="from">Kindle（每分钟）</div><div class="arr">→</div>
+    <div class="to"><b>peqw0312.github.io/…/dashboard.png</b>
+      <i>第二条出口。电脑彻底关着时，屏就靠这条活着 —— 这是"电脑可以关掉"那条要求的落点。</i></div>
+  </div>
+
+  <div class="row dim">
+    <div class="from">Kindle（每分钟）</div><div class="arr">⇢</div>
+    <div class="to"><b>:8731/poll.json 和 /report</b>
+      <i>问一句"下一班多久来"、说一句"我刚贴的是哪张"。只有电脑开着才有，缺了不影响出图，只影响调试台那两栏。</i></div>
+  </div>
+
+  <div class="row">
+    <div class="from">你（浏览器）</div><div class="arr">→</div>
+    <div class="to"><b>调试台 → git push / Actions / serve.py</b>
+      <i>换皮肤、立刻出图、看日志都从这儿走，<b>不用碰屏</b>。这是"以后 kindle 尽量不动它"那条要求。</i></div>
+  </div>
+</div>
+
+<h2>三、两条路：一张图是怎么上屏的</h2>
+<div class="paths">
+  <div class="path">
+    <h3>A · 平时（电脑可能关着）</h3>
+    <ol class="steps">
+      <li>GitHub 定时任务跑一轮 <code>build.yml</code>（实测 1～3 小时一次，不守时）。</li>
+      <li>Actions 在美国的机器上抓和风 + 行情，跑<b>同一份</b> <code>generate.py</code>。</li>
+      <li>产物覆盖到 <code>screen</code> 分支 → Pages 自动部署。</li>
+      <li>屏每分钟来取一次，取到就换、没换就不重绘。</li>
+      <li>所以屏上"更新 HH:MM"是<b>云端出图的时刻</b>，不是屏自己的时刻 —— 它可能比现在旧一两小时，这是设计不是坏了。</li>
+    </ol>
+  </div>
+  <div class="path">
+    <h3>B · 你在调试台按「立刻出图」</h3>
+    <ol class="steps">
+      <li>浏览器打本机 <code>POST /publish?skin=…</code>（同一个协议，不用 token）。</li>
+      <li><code>serve.py</code> 在<b>这台电脑上</b>跑同一段 <code>generate.py</code>，实测 1.1 秒。</li>
+      <li>出完先<b>自检</b>：这张有没有天气那一块？没有就<b>不发</b>，屏上继续是云端那张好的。</li>
+      <li>有 → 记下这张的校验和，标记"这是本机刚出的"。</li>
+      <li>屏下一分钟来取，拿到它，比对校验和，不一样才重绘。</li>
+      <li>屏顺手上报"我贴的是 <code>1105677263 49915</code>"→ 调试台真值卡显示<b>「和本机这张是同一张 ✓」</b>。</li>
+    </ol>
+  </div>
+</div>
+
+<h2>四、四条不能破的规矩<span>每一条都是踩过坑换来的</span></h2>
+<div class="rules">
+  <div class="rule"><b>1 · 零成本</b><i>不付费、不绑卡、不注册。和风要实名是你自己接受的例外。任何"要养一台服务器/一个服务"的方案先按这条毙掉。</i></div>
+  <div class="rule"><b>2 · 凭据绝不进仓库</b><i>仓库是公开的（屏没法带 token，只能走公开地址）。Key 只进 GitHub Secrets，或本机那个被 <code>.gitignore</code> 挡着的 env 文件。公开发布的 build.log 里也不能出现 —— 带 key 的参数一律打 <code>***</code>。</i></div>
+  <div class="rule"><b>3 · 电脑可以关掉</b><i>数据来自云端。局域网只是<b>加速器</b>，不是替代：电脑一关，屏自动落回 GitHub，什么都不用改。</i></div>
+  <div class="rule"><b>4 · 空图不出门</b><i>出空白图是<b>不会报错</b>的。所以发图那一端必须自己查：本机这张是不是我亲手出的、有没有天气。真出过一次事故 —— 一张没凭据的测试图盖在云端好图上面，屏"没信息"了几小时。</i></div>
+</div>
+
+<h2>五、插线会发生什么<span>这是最容易把人绕晕的一节</span></h2>
+<ul class="tight">
+  <li><b>插线 = 屏变成一块 U 盘</b>（电脑上看到 D:）。这时候<b>屏幕点不动</b>，任何"点一下屏"的操作都必须先拔线。</li>
+  <li><b>正在被 ash 执行的脚本不能原地覆盖</b>（设备是 FAT，没有 inode 那层间接）。所以顺序只能是：停止 → 插线 → 拷 → 拔线 → 启动。</li>
+  <li><b>仓库工作副本是 CRLF，屏上必须是 LF</b>。直接拷会把 <code>\r</code> 带进 shell 变量里，症状是"配置看着对、行为完全不对"。拷之前要转换。</li>
+  <li><b><code>config.sh</code> 只在启动时读一次</b>。拷完不重启脚本 = 白拷。</li>
+  <li><b>屏睡着的时候什么都进不去</b>：射频是关的，ping 不通、也叫不醒。以前为了省电让它睡（实测能睡满 601 秒），2026-09-29 起长期插电源，<b>改成不睡了</b> —— 那一整类"屏停在旧图上几小时、日志一个字都不留"的毛病跟着没了。</li>
+</ul>
+
+<h2>六、出问题时先看哪里<span>按这个顺序查，别从屏开始猜</span></h2>
+<table>
+  <tr><th>症状</th><th>先看这里</th></tr>
+  <tr><td>屏上信息旧 / 缺一块</td>
+      <td>调试台 <b>屏上现在这张</b> 那一行：它会说"本机发的是云端镜像 / 本机刚出的 / 硬盘上那张不发，因为…"。这一句直接指出是哪一层。</td></tr>
+  <tr><td>屏整个停在一张不动</td>
+      <td>局域网日志 <code>.workbuddy/_serve.log</code> 有没有<b>每分钟一条</b>来自屏的请求。一条都没有 = 屏没醒 / WiFi 掉了 / 脚本没跑，跟图的内容无关。</td></tr>
+  <tr><td>怀疑云端没出新图</td>
+      <td>用 <code>api.github.com</code> 查 run 列表和 <code>screen/dashboard.png</code> 的真实大小。<b>别信这台电脑直接读到的 Pages</b> —— 它挂着 GitHub 加速工具，会按 URL 回缓存内容（实测同一分钟报出过三种字节数）。</td></tr>
+  <tr><td>按了按钮像没反应</td>
+      <td><code>GET :8731/state</code>，看 <code>can_build</code> / <code>served</code> / <code>note</code> 三个字段。按钮一律会回话，不回话就是请求没到本机。</td></tr>
+  <tr><td>换皮肤没生效</td>
+      <td>皮肤选择记在 <code>screen/skin.txt</code>（不写回 config.yaml，否则会自己触发自己）。云端那轮跑完后 <code>build.log</code> 第一行会写"本次用版式：…"。</td></tr>
+</table>
+
+<h2>七、现在的状态</h2>
+<table>
+  <tr><th>事情</th><th>状态</th></tr>
+  <tr><td>云端出图（Actions → screen → Pages → 屏）</td><td><span class="ok">在跑</span>，最近一轮 10:25，含真实和风数据</td></tr>
+  <tr><td>局域网快道（serve.py）</td><td><span class="ok">在跑</span>，只发"该上屏的那一张"，空图不发</td></tr>
+  <tr><td>本机出图（立刻出图按钮）</td><td><span class="ok">通了</span>，1.1 秒一张真图</td></tr>
+  <tr><td>屏：不睡觉、每分钟一班、上报状态</td><td><span class="ok">刚上线</span>，13:48:31 第一次来取（新脚本 + 新 config 都在跑了）</td></tr>
+  <tr><td>路由器给 192.168.31.158 做 DHCP 保留</td><td><span class="pend">没做</span> —— IP 一漂，快道会<b>静默失效</b>，症状和"电脑没开"一模一样，很难查</td></tr>
+  <tr><td>Pages 那份调试台的「发布」按钮</td><td><span class="pend">没建 token</span>（要你在浏览器里输一次密码）。本机那份不需要它</td></tr>
+  <tr><td>改日志措辞那个小提交 <code>75d3498</code></td><td><span class="pend">没推上去</span> —— 这台电脑连 <code>github.com:443</code> 时通时不通，不影响屏</td></tr>
+</table>
+
+<div class="foot">
+  看图的人不用记路径，记这三句就够：<br>
+  ① 屏<b>每分钟</b>去取一张别人画好的图，它自己不算任何数据；<br>
+  ② 画图这件事<b>云端一直在做</b>、<b>你的电脑开着时做得更快</b>；<br>
+  ③ 屏幕上出现的任何一块空白，都是<b>画图那一步没拿到数据</b>，不是屏坏了。
+</div>
+
+</div>
+</body>
+</html>
