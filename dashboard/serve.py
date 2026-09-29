@@ -141,10 +141,15 @@ MIRROR_TTL = 60.0
 def cloud_image() -> dict:
     """云端那张（GitHub Pages），带 60 秒缓存。
 
-    用 Pages 不用 raw.githubusercontent：这台机器上 raw 那条经常直接连不通，
+    用 Pages 不用 raw.githubusercontent：这台机器上 raw 那条直接连不通（实测 000），
     Pages 是通的 —— 和 DASHBOARD_URLS 里的顺序一致。
+
+    ⚠️ URL 上必须带一次性参数。这台电脑挂着 GitHub 加速器，它会**按 URL 缓存**：
+    实测同一时刻 api.github.com 说屏那支是 49728 字节，而不带参数的 Pages 请求返回过
+    47158 / 56866 两种别的版本。设备只信"局域网给的那张"，被缓存钉住就是几小时旧图，
+    而且调试台和屏上一起旧 —— 看不出来，比白屏更难查。
     """
-    url = f"https://{PAGES_HOST}/{REPO_NAME}/dashboard.png"
+    url = f"https://{PAGES_HOST}/{REPO_NAME}/dashboard.png?t={int(time.time())}"
     now = time.time()
     if MIRROR["data"] and now - MIRROR["at"] < MIRROR_TTL:
         return MIRROR
@@ -335,7 +340,7 @@ class Handler(BaseHTTPRequestHandler):
             # 屏上现在挂的是哪套。<img> 跨域能显示，fetch 不行 —— GitHub Pages
             # 不发 Access-Control-Allow-Origin。所以在这里转一道手，页面只用相对路径。
             import urllib.request
-            url = f"https://{PAGES_HOST}/{REPO_NAME}{path}"
+            url = f"https://{PAGES_HOST}/{REPO_NAME}{path}?t={int(time.time())}"
             try:
                 with urllib.request.urlopen(url, timeout=15) as r:
                     body = r.read()
