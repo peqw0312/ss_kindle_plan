@@ -63,6 +63,7 @@ PAGES_HOST = "peqw0312.github.io"
 MONITOR = ROOT / "docs" / "monitor.html"
 POLL = ROOT / "docs" / "poll.json"
 DEVSTATE = ROOT / "docs" / "device_state.json"
+YESTERDAY = ROOT / "docs" / "yesterday.json"
 
 
 def cksum_of_bytes(data: bytes) -> str:
@@ -291,11 +292,31 @@ def boost_now() -> int:
     return until
 
 
+def pull_yesterday_archive() -> None:
+    """出图前把云端那份「昨天存档」拉下来，覆盖本机这份。
+
+    为什么：屏上有没有"昨天"那一格，取决于读到的存档是哪一份。云端 workflow
+    出图前也会拉一次（`.github/workflows/build.yml` 的「取回昨天的存档」）。两边
+    各自攒的话，本机这张和云端那张会一格有一格没有，换来换去像版式在抽风。
+    拉不到就算了 —— 本机那份照样能滚，不影响出图。
+    """
+    import urllib.request
+    url = f"https://{PAGES_HOST}/{REPO_NAME}/yesterday.json?t={int(time.time())}"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            body = r.read()
+        json.loads(body.decode("utf-8"))          # 不是合法 JSON 就别覆盖好的那份
+        YESTERDAY.write_bytes(body)
+    except Exception:
+        pass
+
+
 def build(skin: str | None) -> tuple[bool, str]:
     """跑一次出图。返回 (成没成, 给人看的一句话)。"""
     ok_creds, why = can_build()
     if not ok_creds:
         return False, why + " —— 出了也是一张没有天气的图，不发。要立刻换新内容请去云端那份调试台按发布。"
+    pull_yesterday_archive()
     cmd = [sys.executable, str(GEN), "--config", str(CONFIG), "--no-html"]
     if skin:
         cmd += ["--layout", skin]

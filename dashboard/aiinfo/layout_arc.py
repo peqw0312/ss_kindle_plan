@@ -569,23 +569,15 @@ def _cells(wx: dict) -> list[tuple[str, str]]:
 def _forecast(wx: dict) -> list[tuple[str, str, str, str, str]]:
     """近日天气：(标签, 图标, 描述, 高, 低)。
 
-    顶上那格「昨天」来自 generate.py 的**和风自存档**（前一天最后一次预报的
-    日极值）—— 和风的时光机接口我们调不通，而混用 Open-Meteo 会被当成口径误差。
+    「昨天」那一格由 generate.py 的 `yesterday_archive()` **直接插在 forecast 最前面**，
+    所有版式共用同一份数据 —— 以前是这里自己拼的，于是只有 arc 有、c1 没有，
+    用户问的"皮肤都加上这个功能"就是被这个不对称坑到的。
     读不到存档就没有这一格，**绝不拿今天的数凑**（出稿那版塞的是假昨天，已废弃）。
-
-    有昨天时总数仍是四格：昨天 / 今天 / 明天 / 后天，和定稿那张一致。
     """
-    out = []
-    y = wx.get("yesterday") or {}
-    if y.get("high") is not None:
-        out.append(("昨天", str(y.get("icon", "cloud")), clean_text(y.get("desc", ""), 8),
-                    f'{y["high"]}°', f'{y.get("low", "--")}°'))
-    room = 4 - len(out)
-    for f in (wx.get("forecast") or [])[:room]:
-        out.append((str(f.get("label", "")), str(f.get("icon", "cloud")),
-                    clean_text(f.get("desc", ""), 8),
-                    f'{f.get("high", "--")}°', f'{f.get("low", "--")}°'))
-    return out
+    return [(str(f.get("label", "")), str(f.get("icon", "cloud")),
+             clean_text(f.get("desc", ""), 8),
+             f'{f.get("high", "--")}°', f'{f.get("low", "--")}°')
+            for f in (wx.get("forecast") or [])[:4]]
 
 
 def arc_data(cfg, data: dict) -> dict:

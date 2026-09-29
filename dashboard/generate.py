@@ -147,40 +147,57 @@ def yesterday_archive(data: dict, path, today) -> None:
     ⚠️ 它是"前一天最后一次预报的日极值"，不是气象站实测。这个区别必须写在这，
       因为屏幕上只写着「昨天 34°/23°」，看不出区别。
       没有这个文件（第一天、或云端从没跑过）就没有这一格 —— 绝不拿今天凑。
+
+    ⚠️ 存档是**两格**的（yesterday + today）。以前只有一格，每出一张就把"昨天"
+      覆盖掉 —— 于是这一格只在当天第一轮存在，下午就凭空消失，看起来像"版式又
+      变了"。换日时把上一轮的 today 滚成 yesterday，今天的数每轮刷新。
+
+    这一格是**插进 forecast 最前面**的，不是各版式自己拼：这样所有皮肤（c1、arc，
+    以及以后加的）自动都有，不用一处一处补。
     """
     from pathlib import Path
     import json as _json
     path = Path(path)
     wx = data.get("weather")
-    today_iso = today.strftime("%Y-%m-%d")
-
-    if wx:
-        try:
-            saved = _json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
-        except Exception as exc:
-            print(f"[昨天] 存档读不了，这一格就不画：{type(exc).__name__}: {exc}")
-            saved = None
-        if isinstance(saved, dict) and saved.get("date") and saved["date"] != today_iso:
-            wx["yesterday"] = {
-                "label": "昨天", "date": saved["date"],
-                "desc": saved.get("desc", ""), "icon": saved.get("icon", "cloud"),
-                "high": saved.get("high"), "low": saved.get("low"),
-                "source": "和风天气（前一天存档）",
-            }
-
     if not wx:
         return
+    today_iso = today.strftime("%Y-%m-%d")
+
+    try:
+        saved = _json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    except Exception as exc:
+        print(f"[昨天] 存档读不了，这一格就不画：{type(exc).__name__}: {exc}")
+        saved = None
+    if not isinstance(saved, dict):
+        saved = {}
+    if "today" not in saved and saved.get("date"):
+        saved = {"today": saved}          # 老格式：整份就是"今天那格"，别丢历史
+
+    yst, cur = saved.get("yesterday"), saved.get("today")
+    if isinstance(cur, dict) and cur.get("date") and cur["date"] != today_iso:
+        yst, cur = cur, None              # 换日了：上一轮的今天就是昨天
+    if isinstance(yst, dict) and yst.get("date") == today_iso:
+        yst = None                        # 被今天的数污染过，宁可不画也不画错
+
+    if isinstance(yst, dict) and yst.get("high") is not None:
+        entry = {"label": "昨天", "date": yst.get("date", ""),
+                 "desc": yst.get("desc", ""), "icon": yst.get("icon", "cloud"),
+                 "high": yst.get("high"), "low": yst.get("low"),
+                 "precip": None, "uv": None, "pop": None,
+                 "source": "和风天气（前一天存档）"}
+        wx["yesterday"] = entry
+        wx["forecast"] = [entry] + list(wx.get("forecast") or [])
+
     # 存今天：优先用逐日预报里"今天"那一格（它才是日极值），拿不到就用实况兜一下
     day = next((f for f in (wx.get("forecast") or []) if f.get("label") == "今天"), None)
-    if day is None and (wx.get("forecast") or []):
-        day = wx["forecast"][0]
     high = (day or {}).get("high")
-    low = (day or {}).get("low")
     if high is None:
         return
-    payload = {"date": today_iso, "high": high, "low": low,
-               "icon": (day or {}).get("icon", wx.get("icon", "cloud")),
-               "desc": (day or {}).get("desc", wx.get("desc", ""))}
+    today_slot = {"date": today_iso, "high": high, "low": (day or {}).get("low"),
+                  "icon": (day or {}).get("icon", wx.get("icon", "cloud")),
+                  "desc": (day or {}).get("desc", wx.get("desc", ""))}
+    payload = {"yesterday": yst if isinstance(yst, dict) else {},
+               "today": today_slot}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
