@@ -244,16 +244,23 @@
       <td>皮肤选择记在 <code>screen/skin.txt</code>（不写回 config.yaml，否则会自己触发自己）。云端那轮跑完后 <code>build.log</code> 第一行会写"本次用版式：…"。</td></tr>
 </table>
 
-<h2>七、现在的状态</h2>
+<h2>七、现在的状态<span>数字都是 2026-09-29 实测的，不是设计值</span></h2>
 <table>
-  <tr><th>事情</th><th>状态</th></tr>
-  <tr><td>云端出图（Actions → screen → Pages → 屏）</td><td><span class="ok">在跑</span>，最近一轮 10:25，含真实和风数据</td></tr>
-  <tr><td>局域网快道（serve.py）</td><td><span class="ok">在跑</span>，只发"该上屏的那一张"，空图不发</td></tr>
-  <tr><td>本机出图（立刻出图按钮）</td><td><span class="ok">通了</span>，1.1 秒一张真图</td></tr>
-  <tr><td>屏：不睡觉、每分钟一班、上报状态</td><td><span class="ok">刚上线</span>，13:48:31 第一次来取（新脚本 + 新 config 都在跑了）</td></tr>
-  <tr><td>路由器给 192.168.31.158 做 DHCP 保留</td><td><span class="pend">没做</span> —— IP 一漂，快道会<b>静默失效</b>，症状和"电脑没开"一模一样，很难查</td></tr>
+  <tr><th>事情</th><th>实测</th></tr>
+  <tr><td>云端多久出一张</td>
+      <td><b>名义上每小时，实际 2.9 ~ 8.7 小时一次</b>（GitHub 的定时任务会攒着晚点，这是平台行为，不是我们的 bug）。所以"屏上的数据新不新"从来不取决于屏多久来取。</td></tr>
+  <tr><td>电脑开着时多久出一张</td><td><span class="ok">每 15 分钟自动一张</span>，不用点按钮。电脑一关这条自然停，屏落回上面那个节奏</td></tr>
+  <tr><td>Kindle 多久来取一遍</td>
+      <td><span class="ok">实测 62 ~ 64 秒一班</span>（配的是 1 分钟；多出的 2~4 秒是它自己取图 + 比对 + 贴屏的耗时）。取回来和屏上那张一样就不重绘，所以不闪屏。</td></tr>
+  <tr><td>网页点一下 → 屏上换掉，要多久</td>
+      <td><b>最慢约 1 分钟</b>（出图 1.6 秒 + 等它下一班来取）。插线更新一次脚本之后能压到 <b>约 10 秒</b> —— 现在设备心跳有个 60 秒地板，把"调屏模式"压平了，这个地板已经改好、在等设备侧更新。</td></tr>
+  <tr><td>换皮肤</td>
+      <td>两条路，<b>作用域不一样</b>：本机「立刻出 c1 / 立刻出 arc」是<b>临时</b>的（电脑开着才有效，一关就回到配置文件那套）；要<b>长期</b>换得走云端那份调试台的「发布」，它把选择记进 <code>screen/skin.txt</code>，以后每一轮出图都按它。</td></tr>
+  <tr><td>调试台"屏上现在这张"</td>
+      <td><span class="pend">还看不到</span> —— 设备上报的 URL 里那个空格把请求弄断了（提交 <code>8913ef4</code> 已修），要插线更新脚本才生效。在那之前这一栏只能显示"设备从没上报过"</td></tr>
+  <tr><td>路由器给 192.168.31.158 做 DHCP 保留</td>
+      <td><span class="pend">没做</span> —— IP 一漂，局域网这条快道<b>静默失效</b>，症状和"电脑没开"一模一样，很难查</td></tr>
   <tr><td>Pages 那份调试台的「发布」按钮</td><td><span class="pend">没建 token</span>（要你在浏览器里输一次密码）。本机那份不需要它</td></tr>
-  <tr><td>改日志措辞那个小提交 <code>75d3498</code></td><td><span class="pend">没推上去</span> —— 这台电脑连 <code>github.com:443</code> 时通时不通，不影响屏</td></tr>
 </table>
 
 <div class="foot">
