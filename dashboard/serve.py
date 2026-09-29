@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""局域网快道：点一下就出图，Kindle 下一班来取（默认 10 分钟内）。
+"""局域网快道：点一下就出图，Kindle 下一班来取（平时 1 分钟内，调屏时 12 秒内）。
 
 为什么还要它：GitHub 那条路"出图"要跑一轮 Actions（约 1 分钟），前面还压着一层
 CDN 缓存。这台电脑开着的时候，直接让它跑同一段 generate.py，几秒就有图。
@@ -213,6 +213,26 @@ def cloud_image() -> dict:
     return MIRROR
 
 
+DEVICE_SEEN = {"at": 0.0, "gap": 0, "ua": ""}
+
+
+def note_device_fetch(handler) -> None:
+    """记下"设备上一班是什么时候来的、隔多久来一次"。
+
+    为什么不写"每 N 秒一班"这种承诺：说过一次谎 —— 调试台喊"每 30 秒一班"，
+    而设备心跳有个 60 秒地板，实测一直是 66 秒。界面和机器说的不一样，比慢更害人。
+    这里改成量：谁在取图看 User-Agent 就行（设备是 curl，浏览器是 Mozilla）。
+    """
+    ua = handler.headers.get("User-Agent", "") or ""
+    if not (ua.lower().startswith("curl") or "wget" in ua.lower()):
+        return
+    now = time.time()
+    if DEVICE_SEEN["at"]:
+        DEVICE_SEEN["gap"] = int(round(now - DEVICE_SEEN["at"]))
+    DEVICE_SEEN["at"] = now
+    DEVICE_SEEN["ua"] = ua
+
+
 def current_image():
     """这一趟给设备哪一张。返回 (bytes, 是谁, 一句话说明)。
 
@@ -240,8 +260,10 @@ def current_image():
         return m["data"], "云端镜像", "本机还没有图"
     return b"", "", f"本机没有图，云端也取不到（{m['err']}）"
 
-BOOST_SECONDS = 30          # 调屏模式下设备每隔多少秒来取一次
-BOOST_WINDOW = 30 * 60      # 调屏持续多久，到点自己回落到平时的 10 分钟
+BOOST_SECONDS = 10          # 调屏模式下设备每隔多少秒来取一次。
+# 取 10 是因为不睡觉时 secure_sleep 是按 10 秒一段睡的 —— 填 12 会被凑成 20。
+BOOST_WINDOW = 30 * 60      # 调屏持续多久，到点自己回落到平时的 1 分钟
+AUTO_BUILD_MINUTES = 15     # 电脑开着时，每隔这么久自动出一张（0 = 关）
 
 
 def write_poll(boost_until: int) -> None:
@@ -250,7 +272,7 @@ def write_poll(boost_until: int) -> None:
     为什么设备只能"被问"不能"被推"：它睡着时 WiFi 射频是关的（实测 ping 不通），
     所以没有任何办法把它叫醒。能做的只有让它下次醒来时顺手问一句"接下来睡多久" ——
     这就是 boost 的全部机制，也解释了为什么第一次按发布仍要等到它下一班
-    （平时最多 10 分钟），之后才变成 30 秒一班。
+    （平时最多 1 分钟），之后才变成 boost_seconds 那一档。
     """
     import json as _json
     try:
@@ -297,6 +319,21 @@ def build(skin: str | None) -> tuple[bool, str]:
     STATE["last_build"] = datetime.now().strftime("%H:%M:%S")
     STATE["skin"] = skin or "（配置文件的默认）"
     return True, f"已出图（{STATE['seconds']}s）"
+
+
+def auto_build_loop(minutes: int) -> None:
+    """电脑开着的时候，每隔 AUTO_BUILD_MINUTES 分钟自己出一张。
+
+    为什么要有它：**GitHub 的定时任务不守时**。名义上每小时，实测 2026-09-28/29
+    两天里是 2.9 ~ 8.7 小时一次。屏改成每分钟来取之后，"取"这一端已经不是瓶颈了，
+    慢的是"出" —— 取到的可能是六小时前那张。数据要新只能让出图这一端跑得更勤。
+    电脑关着时这条自然停，屏自动落回云端节奏，所以"数据来自云端而不是我的电脑"
+    那条要求没有被动过：这台只是把等待时间压短，不是替代。
+    """
+    while True:
+        time.sleep(minutes * 60)
+        ok, msg = build(None)
+        sys.stderr.write(f"  [自动出图 {'成功' if ok else '没成'}] {msg}\n")
 
 
 PAGE = """<!doctype html><meta charset=utf-8>
@@ -365,6 +402,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, body, "image/png")
             else:
                 self._send(404, note.encode("utf-8") or b"no image yet", "text/plain")
+                return
+            note_device_fetch(self)
             return
         if path.startswith("/skins/") or path == "/skin.txt":
             # 皮肤墙要 fetch manifest.json 拿清单，页面也要读 skin.txt 才知道
@@ -402,6 +441,9 @@ class Handler(BaseHTTPRequestHandler):
             out = {"device": None, "served": "", "hash": "", "note": "", "empty": empty_reason()}
             ok_creds, why = can_build()
             out["can_build"] = {"ok": ok_creds, "why": why}
+            out["device_seen"] = dict(DEVICE_SEEN,
+                                      ago=int(round(time.time() - DEVICE_SEEN["at"]))
+                                      if DEVICE_SEEN["at"] else None)
             try:
                 body_bytes, src, note = current_image()
                 out["served"], out["hash"], out["note"] = src, cksum_of_bytes(body_bytes), note
@@ -466,7 +508,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         boost_now()          # 按发布 = 我在改东西，顺手把调屏窗口续上
         ok, msg = build(skin or None)
-        msg += f"（已进调屏模式：每 {BOOST_SECONDS} 秒一班，30 分钟后自动回落）"
+        msg += "（已进调屏模式：接下来 30 分钟屏来得更勤；隔多久来一班看上面那行实测）"
         self._send(200, json.dumps({"ok": ok, "msg": msg}, ensure_ascii=False).encode(),
                    "application/json")
 
@@ -494,7 +536,16 @@ def main() -> int:
                     help="0.0.0.0 才能被 Kindle 访问；127.0.0.1 只给自己看")
     ap.add_argument("--poll-hint", default="1",
                     help="设备取图间隔（分钟），只用于页面上那句话")
+    ap.add_argument("--auto-build", type=int, default=AUTO_BUILD_MINUTES,
+                    help=f"电脑开着时每隔几分钟自动出一张（0 = 关，默认 {AUTO_BUILD_MINUTES}）")
     args = ap.parse_args()
+
+    if args.auto_build > 0:
+        import threading
+        threading.Thread(target=auto_build_loop, args=(args.auto_build,), daemon=True).start()
+        print(f"  自动出图：每 {args.auto_build} 分钟一张（全局变量 AUTO_BUILD_MINUTES 改默认值）")
+    else:
+        print("  自动出图：关（屏的新旧完全跟着云端那 3～9 小时走）")
 
     srv = ThreadingHTTPServer((args.bind, args.port), Handler)
     srv.poll_hint = args.poll_hint            # type: ignore[attr-defined]

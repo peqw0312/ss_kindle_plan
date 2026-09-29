@@ -553,9 +553,13 @@ function lanState() {
   const el = document.getElementById('lanState');
   if (!el || !LAN) return;
   const left = Math.max(0, Math.round((LAN.boost_until - Date.now() / 1000) / 60));
-  el.textContent = left > 0
-    ? `调屏模式进行中：设备每 ${LAN.boost_seconds || 30} 秒来取一次，还剩约 ${left} 分钟`
-    : `平时节奏：设备每 ${(S && S.every) || 10} 分钟来取一次`;
+  // 报"实测隔多久来一班"，不报"每 N 秒一班"：后者是个承诺，而设备心跳的下限
+  // 是它自己那份脚本说了算 —— 曾经调试台喊"每 30 秒"，设备实际 66 秒。
+  const seen = LAN.state && LAN.state.device_seen;
+  const real = seen && seen.ago != null
+    ? `上一班 ${seen.gap || '?'} 秒前来取（${seen.ago} 秒前）`
+    : '还没看到设备来取过图';
+  el.textContent = (left > 0 ? `调屏模式进行中，还剩约 ${left} 分钟 · ` : '') + real;
 }
 
 async function lanPublish(skin, btn) {
