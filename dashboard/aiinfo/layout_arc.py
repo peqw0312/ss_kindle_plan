@@ -444,7 +444,7 @@ def lay_terminal(sh, d, y, extra=0):
         for name in cal["fest_today"][:2]:
             w = tag(sh, rx, fy, name, sh.f.sans(30, True), INK, PAPER, 12, 46)
             fy += 54
-        for line in (cal["countdown"], cal["tiaoxiu"]):
+        for line in (cal["countdowns"] + ([cal["tiaoxiu"]] if cal["tiaoxiu"] else [])):
             if line:
                 sh.ink(rx, fy, fy + 34, sh.clip(line, sh.f.sans(26), X1 - rx),
                        sh.f.sans(26), INK)
@@ -630,8 +630,8 @@ def arc_data(cfg, data: dict) -> dict:
             "lunar": clean_text(cal.lunar_text, 12),
             "zodiac": f"{cal.ganzhi_year} · {cal.shengxiao}年",
             "fest_today": [cal.badge] if cal.badge and cal.badge_kind == "festival" else [],
-            "countdown": (f"距{cal.term_next}还有 {cal.term_next_days} 天"
-                          if cal.term_next_days else ""),
+            # 节气和放假两条一起给：以前这里只拼节气，所以"国庆还有几天"从来没上过屏
+            "countdowns": list(cal.countdowns),
             "tiaoxiu": "",
         },
         "wx": {

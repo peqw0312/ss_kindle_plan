@@ -528,6 +528,34 @@ def statutory_countdown(d: date) -> str:
     return ""
 
 
+def holiday_countdown(d: date) -> tuple[str, int] | None:
+    """下一个"放假的日子"：(名称, 还有几天)。
+
+    优先国务院办公厅那张表（它才是"放几天假"的口径）；表里没有的年份退回
+    重要节日列表，免得整年一个字都不显示。
+    """
+    for name, a, _b, _w in STATUTORY_HOLIDAYS.get(d.year, ()):
+        if a > d:
+            return name, (a - d).days
+    return upcoming_festival(d)
+
+
+def countdown_lines(d: date, term_next: str = "", term_days: int = 0) -> tuple[str, ...]:
+    """屏上那行"还有几天"。
+
+    这件事有**两条独立的线**：节气（寒露 9 天）和放假（国庆 2 天）。以前各版式
+    各拿一条 —— arc 只给节气、c1 只给放假，所以屏上永远缺一半，用户问的
+    "为什么没有国庆"就是这么来的。合成一份放这儿，近的排前面，谁显示都是两条。
+    """
+    out: list[tuple[int, str]] = []
+    if term_next and term_days > 0:
+        out.append((term_days, f"距{term_next} {term_days} 天"))
+    hd = holiday_countdown(d)
+    if hd and hd[1] > 0:
+        out.append((hd[1], f"距{hd[0]} {hd[1]} 天"))
+    return tuple(t for _n, t in sorted(out, key=lambda x: x[0]))
+
+
 def tiaoxiu_hint(d: date) -> str:
     """未来 7 天里的调休上班日（周末补班）。同周说「本周X」，跨周给日期。"""
     for _name, _a, _b, work in STATUTORY_HOLIDAYS.get(d.year, ()):
@@ -566,14 +594,13 @@ class CalendarInfo(NamedTuple):
     festivals: tuple[str, ...]
     badge: str               # 徽章文字：节日优先，其次节气
     badge_kind: str          # festival / term / ""
-    upcoming: str            # 近期节日提示：中秋 7 天后
     zhiri: str               # 建除值日：开
     yi: tuple[str, ...]
     ji: tuple[str, ...]
     chong: str               # 冲牛
     sha: str                 # 煞西
     statutory: str = ""             # 今天所在的法定节假日名：国庆节
-    statutory_countdown: str = ""   # 距国庆节还有 6 天
+    countdowns: tuple[str, ...] = ()  # 距国庆 2 天 / 距寒露 9 天，近的在前
     tiaoxiu: str = ""               # 本周日调休上班
 
 
@@ -615,11 +642,6 @@ def calendar_info(dt: datetime | date) -> CalendarInfo:
         badge, badge_kind = "", ""
 
     # 近期节日提示（今天是节日/节气时就不用占了，徽章已经在说这件事）
-    upcoming = ""
-    if not badge:
-        up = upcoming_festival(d)
-        if up:
-            upcoming = f"{up[0]} {up[1]} 天后"
 
     return CalendarInfo(
         solar_text=f"{d.year}年{d.month}月{d.day}日",
@@ -644,13 +666,12 @@ def calendar_info(dt: datetime | date) -> CalendarInfo:
         festivals=tuple(fest),
         badge=badge,
         badge_kind=badge_kind,
-        upcoming=upcoming,
         zhiri=zhi_ri(d),
         yi=yi,
         ji=ji,
         chong=chong,
         sha=sha,
         statutory=statutory_today(d),
-        statutory_countdown=statutory_countdown(d),
+        countdowns=countdown_lines(d, nxt_name, term_next_days),
         tiaoxiu=tiaoxiu_hint(d),
     )

@@ -116,7 +116,7 @@ def main() -> int:
             print(f"   节气：{cal.term_current} 第 {cal.term_current_days} 天 · "
                   f"距 {cal.term_next} {cal.term_next_days} 天（{cal.term_next_date}）")
             print(f"   徽章：{cal.badge or '（无）'}（{cal.badge_kind or '-'}）· "
-                  f"{cal.upcoming or '近期没有节日'}")
+                  f"{' · '.join(cal.countdowns) or '近期没有'}")
             print(f"   宜 {' '.join(cal.yi)}｜忌 {' '.join(cal.ji)}｜{cal.chong} {cal.sha}")
         return 0
 

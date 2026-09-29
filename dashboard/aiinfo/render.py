@@ -945,10 +945,8 @@ class Renderer:
                 note += f" 等 {len(warning)} 条"
             return note
         note = f"{cal.term_current} 第 {cal.term_current_days} 天"
-        if cal.term_next_days > 0:
-            note += f" · 距{cal.term_next} {cal.term_next_days} 天"
-        if cal.badge and cal.upcoming:
-            note += f" · {cal.upcoming}"
+        for line in cal.countdowns:
+            note += f" · {line}"
         return note
 
     # =====================================================================
@@ -1811,8 +1809,10 @@ class Renderer:
                                             cal.ganzhi_year,
                                             f"{cal.shengxiao}年") if t)
         fest = list(cal.festivals or ())[:1]
-        notes = [t for t in (cal.statutory_countdown if plan.get("countdown", True) else "",
-                             cal.tiaoxiu if plan.get("tiaoxiu", True) else "") if t]
+        notes = list(cal.countdowns) if plan.get("countdown", True) else []
+        if plan.get("tiaoxiu", True):
+            notes.append(cal.tiaoxiu)
+        notes = [t for t in notes if t]
         rh = box("meta") + box("lunar") + 2 * gi \
             + (box("fest") + gi if fest else 0) + (box("note") + gi) * len(notes)
         band1 = max(px(P["day"]), rh - gi)

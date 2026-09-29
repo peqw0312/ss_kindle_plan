@@ -207,7 +207,7 @@ def probe_calendar(cfg: Config) -> None:
     line("节气", OK, f"{cal.term_current} 第 {cal.term_current_days} 天 · "
                     f"距 {cal.term_next} {cal.term_next_days} 天（{cal.term_next_date}）")
     line("节日", OK if cal.badge else WARN,
-         f"今天的徽章：{cal.badge or '（无）'}｜{cal.upcoming or '近期没有节日'}")
+         f"今天的徽章：{cal.badge or '（无）'}｜{' · '.join(cal.countdowns) or '近期没有'}")
     line("当日", OK, f"宜 {' '.join(cal.yi)}｜忌 {' '.join(cal.ji)}｜"
                     f"{cal.chong} {cal.sha} · {cal.zhiri}日")
     print("     ↑ 农历表覆盖 1884-2101，不联网、无第三方依赖。"
