@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-09-29 15:11:01",
+  "current": "arc",
+  "layouts": [
+    "c1",
+    "arc"
+  ],
+  "skins": [
+    {
+      "name": "c1",
+      "label": "带（四条分带 + 大图标预报）",
+      "file": "c1.png",
+      "current": false,
+      "bytes": 54930,
+      "notes": []
+    },
+    {
+      "name": "arc",
+      "label": "信息终端（工业军规 · 线稿图标）",
+      "file": "arc.png",
+      "current": true,
+      "bytes": 67481,
+      "notes": []
+    }
+  ]
+}
