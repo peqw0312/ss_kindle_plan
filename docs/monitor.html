@@ -42,18 +42,11 @@
   .wall figcaption { font-size: 12px; color: #57534e; margin-top: 4px; }
   .wall .cur img { outline: 3px solid #16a34a; outline-offset: -3px; }
   .wall .cur figcaption { color: #15803d; font-weight: 600; }
-  /* 定稿但还没移植的：压暗 + 虚线边，一眼看出"这张现在换不了" */
-  .wall .dim img { opacity: .55; border-style: dashed; }
-  .wall .dim figcaption { color: #a8a29e; }
   .tbl { border-collapse: collapse; font: 13px/1.6 ui-monospace, Consolas, monospace; }
   .tbl th, .tbl td { text-align: left; padding: 1px 14px 1px 0; font-weight: 400;
                      border-bottom: 1px solid #f0efed; }
   .tbl th { color: #a8a29e; font-size: 12px; }
   .pub { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-  .pub input { flex: 1 1 320px; font: 12px ui-monospace, Consolas, monospace;
-               padding: 5px 8px; border: 1px solid #d6d3d1; border-radius: 5px;
-               background: #fff; color: #1c1917; }
-  .pub input::placeholder { color: #a8a29e; }
   .wall .pick img { outline: 3px solid #2563eb; outline-offset: -3px; }
   .wall .pick figcaption { color: #1d4ed8; font-weight: 600; }
 </style>
@@ -67,13 +60,13 @@
   </h1>
   <img id="shot" alt="正在读取…">
   <p class="k" id="refreshNote"></p>
-  <p class="k" id="previewNote" hidden>这是**预览**（墙上那张），Kindle 上还是原来的 —— 预览不会改屏，也不发布。</p>
+  <p class="k" id="previewNote" hidden>这是预览（本机各版式的真图之一），屏上还是原来的 —— 点图只是看，不动屏。</p>
 </div>
 
 <div class="panel">
   <div class="card">
     <b>屏上现在这张</b>
-    <p class="k" id="truth">正在问设备…</p>
+    <p class="k" id="truth">正在问这台电脑和屏…</p>
   </div>
 
   <div class="card">
@@ -88,9 +81,8 @@
     <b>刷新排班表</b><span class="k" id="schedSrc"></span>
     <div id="sched">正在读取…</div>
     <p class="k" style="margin-bottom:0">
-      两个时钟分开看：<b>设备取图</b>是算得准的（下面这张表）；<b>云端出图</b>不准 ——
-      GitHub 的定时任务会攒着晚点，实测约 1～3 小时一次，所以"下次上屏"只是
-      设备来取的时刻，取到的可能是几十分钟前的图。
+      两个时钟：<b>屏来取</b>是算得准的（下面这张表，读自屏的配置）；<b>本机出图</b>
+      每 10 分钟一轮，所以"下次上屏"只是它来取的时刻，取到的最多比现在旧 10 分钟。
     </p>
   </div>
 
@@ -100,10 +92,10 @@
   </div>
 
   <div class="card">
-    <b>皮肤墙</b><span class="k">（同一时刻的真灰度出图；点一张 = 预览并选中，再按下面「发布」才上屏）</span>
+    <b>皮肤墙</b><span class="k">（同一批数据的真灰度出图，两张都是刚画的）</span>
     <div id="wall" class="wall">正在读取…</div>
     <p class="k" style="margin-bottom:0">
-      换皮肤：点一张 = 预览并选中，再按下面「立刻出图」。约 1 秒出图，
+      换皮肤：点一张 = 上面大图先预览 + 下面选中它，再按「立刻出图」。本机约 1 秒出图，
       屏下一班来取（实测 60 多秒），所以别当成没生效。
     </p>
     <p class="k">
@@ -129,7 +121,7 @@
 
   <div class="card">
     <details>
-      <summary>完整构建日志</summary>
+      <summary>本机出图日志（上一轮 generate.py 的原样输出）</summary>
       <pre id="log">（还没读到）</pre>
     </details>
   </div>
@@ -148,22 +140,19 @@ const IMG = "/dashboard.png";
 // previewing 为真时**不要**去覆盖 #shot —— 否则用户点开的预览会被自动刷新打回去，
 // 看起来就像"点了没反应"。
 let previewing = false;
-let SKINS = [];          // 墙上那套清单，局域网按钮用它
 
 async function loadImage() {
   if (previewing) return;
   document.getElementById('shot').src = `${IMG}?t=${Date.now()}`;
 }
 
-// 「立刻刷新」必须说话。它其实一直在重新拉图，但云端没出新图时画面一模一样，
-// 于是看起来像按钮坏了 —— 一个不给反馈的按钮就等于一个坏按钮。
-// 这里改成：按下先变灰写「刷新中…」，拉完用 Last-Modified 判断到底有没有新图，
-// 并把结论写在图下面。预览态下更要吭声，因为那时 loadImage() 是故意不覆盖大图的。
+// 「立刻刷新」必须说话：本机没出新图时画面一模一样，不吭声就像按钮坏了 ——
+// 一个不给反馈的按钮就等于一个坏按钮。所以按下先变灰，拉完用 Last-Modified
+// 判断到底有没有新图，把结论写在图下面。预览态下更要吭声，那时故意不换大图。
 let lastModified = null;
 
 async function manualRefresh() {
-  const btn = Array.from(document.querySelectorAll('button'))
-                    .find(function (b) { return /立刻刷新/.test(b.textContent); });
+  const btn = document.getElementById('refreshBtn');   // 以前按文字匹配找自己，改个词就坏
   const note = document.getElementById('refreshNote');
   if (!btn) return;
   const original = btn.textContent;
@@ -174,9 +163,8 @@ async function manualRefresh() {
       note.textContent = '你现在看的是预览，所以大图没动 —— 要回屏上真图按「回到屏上真图」。';
     } else {
       const prev = lastModified;
-      // 读 Last-Modified 只是"顺便告诉你有没有新图"，它失败不该让整次刷新报错。
-      // （同源下正常能读到；本地 file:// 或别的域打开这页时就会失败 —— 那时
-      //  图照样刷新，只是这句话换成"读不到更新时间"。）
+      // 读 Last-Modified 只是为了"顺便说有没有新图"，它失败不该让整次刷新报错：
+      // 被当成文件双击打开时读不到，图照样刷新。
       let headErr = null;
       try {
         const r = await fetch(IMG, { method: 'HEAD', cache: 'no-store' });
@@ -187,9 +175,8 @@ async function manualRefresh() {
       await load(false);
       const changed = prev && prev !== lastModified;
       const when = lastModified ? new Date(lastModified).toLocaleString('zh-CN') : '未知';
-      note.textContent = (changed ? '已刷新：云端出了新图，' : '已刷新：云端没有新图，')
-                       + '屏上这张出图时间 ' + when
-                       + (headErr ? '（读时间失败：' + headErr + '）' : '（本机时间）。');
+      note.textContent = (changed ? '已刷新：本机出了新图，' : '已刷新：本机还没有新图，')
+                       + '这张的出图时间 ' + when + '。';
     }
   } catch (e) {
     note.textContent = '刷新失败：' + e.message;
@@ -199,11 +186,11 @@ async function manualRefresh() {
 }
 
 
-// 点皮肤 = 应用预览：只换这一页顶部那张大图，不写 GitHub、不改屏。
+// 点皮肤 = 预览：只换这一页顶部那张大图，不动屏。
 // 之所以要这么直白地说，是因为"点了没上屏"是这里最容易误会的一件事。
 function previewSkin(name, label) {
   previewing = true;
-  document.getElementById('shot').src = `skins/${name}.png?t=${Date.now()}`;
+  document.getElementById('shot').src = `/skins/${name}.png?t=${Date.now()}`;
   document.getElementById('shotTitle').textContent = `预览：${label}`;
   document.getElementById('previewNote').hidden = false;
   document.getElementById('backBtn').hidden = false;
@@ -264,11 +251,13 @@ async function loadSchedule() {
       const m = t.match(new RegExp('^' + k + '=(\\d+)', 'm'));
       return m ? parseInt(m[1], 10) : dft;
     };
-    S = { every: num('FETCH_EVERY_MINUTES', 60), align: num('FETCH_ALIGN_MINUTE', 10),
+    S = { every: num('FETCH_EVERY_MINUTES', 1), align: num('FETCH_ALIGN_MINUTE', 0),
           qStart: num('QUIET_START', null), qEnd: num('QUIET_END', null) };
+    // 安静期两个都留空 = 不启用。以前这里无条件插值，关掉之后显示"null–null 点不联网"
+    const quiet = (S.qStart === null || S.qEnd === null)
+      ? '全天联网' : `${S.qStart}–${S.qEnd} 点不联网`;
     document.getElementById('schedSrc').textContent =
-      `（读自设备配置：每 ${S.every} 分钟、相位第 ${S.align} 分；`
-      + `${S.qStart}–${S.qEnd} 点不联网）`;
+      `（读自屏的配置：每 ${S.every} 分钟、相位第 ${S.align} 分；${quiet}）`;
     const now = new Date();
     const rows = nextSlots(8).map((d, i) => {
       const mins = Math.round((d - now) / 60000);
@@ -277,13 +266,13 @@ async function loadSchedule() {
       return `<tr><td>${day}${hhmm}</td><td>${mins} 分钟后</td>`
            + `<td>${i === 0 ? '← 就是这一班取到最新那张' : ''}</td></tr>`;
     }).join('');
-    box.innerHTML = `<table class="tbl"><tr><th>设备来取</th><th>距今</th><th></th></tr>${rows}</table>`;
+    box.innerHTML = `<table class="tbl"><tr><th>屏来取</th><th>距今</th><th></th></tr>${rows}</table>`;
     const first = nextSlots(1)[0];
     document.getElementById('next').textContent =
       first ? `${String(first.getHours()).padStart(2, '0')}:${String(first.getMinutes()).padStart(2, '0')}`
             : '—';
   } catch (e) {
-    box.textContent = '读不到设备配置（' + e.message + '），时刻表先不显示';
+    box.textContent = '读不到屏的配置（' + e.message + '），时刻表先不显示';
   }
 }
 
@@ -340,7 +329,7 @@ async function load(showLog) {
   if (showLog) document.querySelector('details').open = true;
 }
 
-// 皮肤墙：读云端随图发布的 skins/manifest.json。
+// 皮肤墙：读本机 docs/skins/manifest.json（起服务时缺了会补，每次手动出图后刷新）。
 // 用 createElement + textContent 而不是拼 innerHTML —— 内容虽然是我们自己
 // 生成的，但拼字符串这种写法一旦哪天数据里混进尖括号，页面就自己烂掉了。
 async function loadWall() {
@@ -358,7 +347,7 @@ async function loadWall() {
       // 不用 loading=lazy：整面墙就两张，懒加载换来的收益是零，
       // 代价是"窗口小 / 标签页在后台"时浏览器干脆不去取，看起来就是没有预览。
       img.alt = s.name;
-      img.title = '点一下 = 预览并选中（不发布）';
+      img.title = '点一下 = 预览并选中，还要按「立刻出图」才上屏';
       img.src = `/skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
       img.onclick = () => { previewSkin(s.name, s.label || s.name); selectSkin(s.name, s.label || s.name); };
       const cap = document.createElement('figcaption');
@@ -371,7 +360,6 @@ async function loadWall() {
       fig.append(img, cap);
       box.appendChild(fig);
     };
-    SKINS = (m.skins || []).map(x => x.name);
     for (const s of (m.skins || [])) add(s);
   } catch (e) {
     box.textContent = '还没读到皮肤墙（docs/skins/）。按一次「立刻出图」就会生成；'
@@ -458,15 +446,16 @@ async function loadTruth() {
       // 而屏是不是活着，本机访问日志比猜准得多
       const seen = j.device_seen;
       el.textContent = served + (seen && seen.ago != null
-        ? ` 屏 ${seen.ago} 秒前来取过图（隔 ${seen.gap || '?'} 秒一班），但它不上报"贴的是哪张"`
-          + ' —— 屏里那份脚本还没有这一步，插线更新后就有了。'
+        ? ` 屏 ${seen.ago} 秒前来取过图${seen.gap ? `（隔 ${seen.gap} 秒一班）` : '（刚重启，还没量到间隔）'}，`
+          + '但它不上报"贴的是哪张" —— 屏里那份脚本还没有这一步，插线更新后就有了。'
         : ' 屏从没来取过图，也没上报过 —— 先确认它在不在取这台电脑（见下面那行实测）。');
       return;
     }
     const mins = Math.max(0, Math.round((Date.now() / 1000 - (d.seen || 0)) / 60));
     const src = d.src === 'none' ? '没拿到图' : d.src;
-    if (d.ok !== '1') { el.textContent = served + `设备 ${mins} 分钟前上报：这一轮没拿到图（来源 ${src}）。屏上还是它上一张成功的。`; return; }
-    const same = d.same ? '和本机这张是同一张 ✓' : '和本机这张不一样 —— 屏上那张更旧，按「进入调屏模式」让它 30 秒后来取一班';
+    if (d.ok !== '1') { el.textContent = served + ` 屏 ${mins} 分钟前上报：这一轮没拿到图（来源 ${src}）。屏上还是它上一张成功的。`; return; }
+    const same = d.same ? '和本机这张是同一张 ✓'
+                        : '和本机这张不一样 —— 屏上那张更旧，等它下一班来取（或按「进入调屏模式」催勤一点）';
     const every = (S && S.every) || 10;      // 设备多久来取一班，读自 config.sh
     el.textContent = served + ` ${mins} 分钟前上报 · 取自 ${src} · ${same}`
       + (mins > every * 3 ? ` · ⚠️ 上报已经隔了 ${mins} 分钟，可能不准（平时每 ${every} 分钟一班）` : '');
