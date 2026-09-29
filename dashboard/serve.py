@@ -67,6 +67,7 @@ SKIN_STATE = ROOT / "docs" / "skin.txt"          # 屏上现在挂哪套版式�
 DEVICE_CONFIG = ROOT / "kindle" / "extensions" / "aistatus" / "config.sh"
 SKINS_TOOL = ROOT / "dashboard" / "tools" / "skins.py"
 MONITOR = ROOT / "docs" / "monitor.html"
+KEPT = ROOT / "docs" / "kept"
 POLL = ROOT / "docs" / "poll.json"
 DEVSTATE = ROOT / "docs" / "device_state.json"
 YESTERDAY = ROOT / "docs" / "yesterday.json"
@@ -169,6 +170,26 @@ def empty_reason() -> str:
 
 
 DEVICE_SEEN = {"at": 0.0, "gap": 0, "ua": ""}
+
+
+def under(base, raw: str):
+    """把 URL 里那截文件名安全地解析成 base 下面的一个文件；不是文件就给 None。
+
+    这个服务**没有任何鉴权**，所以两件事必须在这儿做掉：
+      · 先 unquote —— 中文文件名是百分号编码的，不解码永远匹配不上（定稿页就
+        是因为这个 404 过一次，看着像"路由没写"，其实是没解码）；
+      · 再要求结果真的落在 base 底下，否则 `/kept/../../Windows/win.ini`
+        就是一个无鉴权的任意文件读取。
+    """
+    from urllib.parse import unquote
+    try:
+        root = Path(base).resolve()
+        target = (root / unquote(raw)).resolve()
+    except Exception:
+        return None
+    if root != target.parent and root not in target.parents:
+        return None
+    return target if target.is_file() else None
 
 
 def note_device_fetch(handler) -> None:
@@ -357,12 +378,11 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/skins/"):
             # 皮肤墙：本机 docs/skins/ 里的那几张真图。以前是代理 GitHub Pages 的
             # （Pages 不发 CORS 头，fetch 拿不到），现在图就在本机，直接读盘。
-            name = path[len("/skins/"):].replace("..", "")
-            f = SKINS / name
-            if not name or not f.is_file():
+            f = under(SKINS, path[len("/skins/"):])
+            if f is None:
                 self._send(404, b"not in the wall", "text/plain")
                 return
-            ctype = "application/json" if name.endswith(".json") else "image/png"
+            ctype = "application/json" if f.suffix == ".json" else "image/png"
             self._send(200, f.read_bytes(), ctype)
             return
         if path == "/skin.txt":
@@ -382,6 +402,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/build.log":
             # 上一轮出图的原样输出。云端那套去掉之后，"到底跑了什么"只剩这一份。
             self._send(200, STATE["log"].encode("utf-8"), "text/plain; charset=utf-8")
+            return
+        if path.startswith("/kept/"):
+            # 设计定稿那几页（确定.html / 图标.html 和它们引用的 png）。以前是云端
+            # 随图发布的，现在页面在本机，链接也得在本机落得到。
+            f = under(KEPT, path[len("/kept/"):])
+            if f is None:
+                self._send(404, "定稿页不在 docs/kept/ 里".encode(), "text/plain; charset=utf-8")
+                return
+            ctype = "text/html; charset=utf-8" if f.suffix == ".html" else "image/png"
+            self._send(200, f.read_bytes(), ctype)
             return
         if path == "/report":
             # 设备上报"屏上现在贴的是哪张"。GET 带参数就行：设备那边只有 curl，

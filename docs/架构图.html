@@ -18,13 +18,12 @@
   h2 { font-size: 17px; margin: 38px 0 12px; padding-bottom: 5px; border-bottom: 2px solid #e7e5e4; }
   h2 span { font-weight: 400; color: #78716c; font-size: 13px; margin-left: 8px; }
 
-  /* 三块地方 */
-  .zones { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; align-items: start; }
+  .zones { display: grid; grid-template-columns: 1.15fr 1fr 1fr; gap: 16px; align-items: start; }
   @media (max-width: 900px) { .zones { grid-template-columns: 1fr; } }
   .zone { background: #fff; border: 1px solid #d6d3d1; border-top: 4px solid #1c1917;
           border-radius: 4px; padding: 14px 16px 16px; }
-  .zone.cloud { border-top-color: #78716c; }
-  .zone.dev   { border-top-color: #292524; }
+  .zone.src  { border-top-color: #a8a29e; }
+  .zone.dev  { border-top-color: #292524; }
   .zone h3 { font-size: 15px; margin: 0 0 2px; }
   .zone .where { font: 12px/1.5 ui-monospace,Consolas,monospace; color: #78716c; margin-bottom: 12px; }
   .item { border-top: 1px dashed #e7e5e4; padding: 8px 0 7px; }
@@ -35,8 +34,6 @@
   .tag.grey { background: #a8a29e; }
   .tag.line { background: #fff; color: #44403c; border: 1px solid #d6d3d1; }
 
-  /* 箭头 */
-  .flow { margin: 6px 0 0; }
   .row { display: grid; grid-template-columns: 190px 44px 1fr; gap: 10px; align-items: baseline;
          padding: 9px 0; border-top: 1px solid #e7e5e4; }
   .row:last-child { border-bottom: 1px solid #e7e5e4; }
@@ -44,24 +41,22 @@
   .arr { text-align: center; color: #1c1917; font-size: 16px; line-height: 1.2; }
   .to b { font: 13px/1.5 ui-monospace,Consolas,monospace; }
   .to i { font-style: normal; color: #57534e; font-size: 13px; display: block; }
-  .row.dim .arr, .row.dim .from { color: #a8a29e; }
 
-  /* 两条路 */
   .paths { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 900px) { .paths { grid-template-columns: 1fr; } }
   .path { background: #fff; border: 1px solid #d6d3d1; border-radius: 4px; padding: 14px 16px; }
   .path h3 { margin: 0 0 10px; font-size: 15px; }
   ol.steps { margin: 0; padding-left: 22px; }
   ol.steps li { margin-bottom: 7px; font-size: 13.5px; line-height: 1.55; }
-  ol.steps code, .item code, .to code, td code, p code {
+  .item code, .to code, td code, p code, li code {
     font: 12.5px ui-monospace,Consolas,monospace; background: #f5f5f4; padding: 1px 4px; border-radius: 3px; }
 
-  /* 规矩 */
   .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 900px) { .rules { grid-template-columns: 1fr; } }
   .rule { background: #1c1917; color: #fafaf9; border-radius: 4px; padding: 13px 15px; }
   .rule b { display: block; font-size: 14px; margin-bottom: 4px; }
   .rule i { font-style: normal; font-size: 13px; color: #d6d3d1; line-height: 1.55; display: block; }
+  .rule.warn { background: #7c2d12; }
 
   table { border-collapse: collapse; width: 100%; background: #fff; font-size: 13.5px; }
   th, td { border: 1px solid #e7e5e4; padding: 8px 10px; text-align: left; vertical-align: top; }
@@ -81,193 +76,170 @@
 <div class="wrap">
 
 <h1>这块屏是怎么连起来的</h1>
-<p class="sub">三块地方：<b>你的电脑</b>（可以关）· <b>GitHub</b>（免费，替你常驻）· <b>Kindle</b>（长期插电源，每分钟来取一次）。
-图里每一条箭头都写着它多久走一次。改于 2026-09-29。</p>
+<p class="sub">两块地方：<b>你的电脑</b>（唯一的出图端，也是屏取图的地址）· <b>Kindle</b>（长期插电源，每分钟来取一次）。
+<b>2026-09-29 起 GitHub 那套已经去掉了</b>（用户：慢吞吞的、网络还一堆问题，反正电脑每天都开机）。
+图里每一条箭头都写着它多久走一次。</p>
 
-<h2>一、三块地方里各有什么<span>点开的文件名就是仓库里的路径</span></h2>
+<h2>一、两块地方 + 两个数据源<span>文件名就是仓库里的路径</span></h2>
 <div class="zones">
 
   <div class="zone">
     <h3>你的电脑</h3>
-    <div class="where">C:\Users\peqw0\WorkBuddy\Kindle Plan<br>局域网 IP 192.168.31.158</div>
-    <div class="item"><b>dashboard/generate.py<span class="tag">出图</span></b>
-      <i>抓数据 + 画成 1072×1448 的 8 级灰度 PNG。云端和本机跑的是<b>同一段代码</b>，所以两边出的图长得一样。</i></div>
-    <div class="item"><b>dashboard/serve.py<span class="tag">局域网快道</span></b>
-      <i>常驻在 :8731。三件事：① 设备来取图时答"当前该上屏的那一张"；② 用 <code>/poll.json</code> 告诉它下一班多久来；③ 收它上报的"屏上贴的是哪张"。</i></div>
+    <div class="where">C:\Users\peqw0\WorkBuddy\Kindle Plan<br>局域网 IP 192.168.31.158 · 监听 :8731</div>
+    <div class="item"><b>dashboard/serve.py<span class="tag">唯一出图端</span></b>
+      <i>常驻。四件事：① 每 10 分钟自动出一张，起服务时先出一张；② 答屏的取图请求，只发"有内容的那张"；③ 用 <code>/poll.json</code> 告诉屏下一班多久来；④ 收屏上报的"我贴的是哪张"。</i></div>
+    <div class="item"><b>dashboard/generate.py<span class="tag">画图</span></b>
+      <i>抓数据 + 画成 1072×1448 的 8 级灰度 PNG。实测 1.1 秒。</i></div>
     <div class="item"><b>docs/monitor.html<span class="tag line">调试台</span></b>
-      <i>同一份页面有两个入口：电脑上 <code>http://192.168.31.158:8731/</code>（能按按钮），和云端 Pages 那份（要 GitHub token）。它会自己认在哪。</i></div>
+      <i>只有一个入口：<code>http://192.168.31.158:8731/</code>。必须由 serve.py 托管 —— 双击文件打开的话按钮一个都动不了，页面会直接告诉你这点。</i></div>
     <div class="item"><b>dashboard/config.yaml</b>
       <i>画什么：城市、自选股、版式、字体。<b>里面绝不写 Key</b>（仓库是公开的）。</i></div>
+    <div class="item"><b>docs/dashboard.png</b>
+      <i>当前这张。屏来取的就是它。不进仓库（是产物）。</i></div>
+    <div class="item"><b>docs/skin.txt · docs/skins/ · docs/yesterday.json<span class="tag grey">本机状态</span></b>
+      <i>选过哪套版式 / 皮肤墙那几张真图 / "昨天"那一格的存档（两格，换日才滚）。</i></div>
     <div class="item"><b>.workbuddy/_qweather_local.env<span class="tag grey">不进仓库</span></b>
-      <i>这台电脑自己的和风凭据（四个 ID + 私钥文件的路径）。有了它，本机 1.1 秒就能出一张真图。</i></div>
+      <i>本机的和风凭据：四个 ID + 私钥文件<b>路径</b>。起服务时读进进程。</i></div>
     <div class="item"><b>kindle/extensions/aistatus/</b>
-      <i>要拷进屏里的那些文件。<b>改这里 = 要插一次线</b>，见下面第四节。</i></div>
+      <i>要拷进屏里的那些文件。<b>改这里 = 要插一次线</b>，见第五节。</i></div>
   </div>
 
-  <div class="zone cloud">
-    <h3>GitHub（免费那部分）</h3>
-    <div class="where">peqw0312 / ss_kindle_plan</div>
-    <div class="item"><b>main 分支</b>
-      <i>源码和配置。你 push 上去的东西都在这儿。</i></div>
-    <div class="item"><b>.github/workflows/build.yml<span class="tag">云端出图</span></b>
-      <i>三种触发：定时（实测 1～3 小时才跑一次，GitHub 会攒）、push（改了 dashboard/ 或 docs/ 就跑）、手动（网页上选版式）。</i></div>
-    <div class="item"><b>Settings → Secrets ×5<span class="tag grey">不进仓库</span></b>
-      <i>和风的 HOST / ISS / SUB / KID / PRIVATE_KEY。只有 Actions 运行时能看见。</i></div>
-    <div class="item"><b>screen 分支<span class="tag line">只放产物</span></b>
-      <i>每次出图<b>整个覆盖</b>，历史永远一个提交：<code>dashboard.png</code>、<code>build.log</code>（凭据 ✓/✗ 和每一步耗时）、<code>index.html</code>（调试台）、<code>skin.txt</code>（屏上现在哪套版式）、<code>skins/</code>（皮肤墙）、<code>kept/</code>（设计定稿）、<code>yesterday.json</code>（昨天存档）。</i></div>
-    <div class="item"><b>Pages</b>
-      <i>= screen 分支的根，自动部署。<br><code>https://peqw0312.github.io/ss_kindle_plan/</code></i></div>
+  <div class="zone src">
+    <h3>两个数据源</h3>
+    <div class="where">都是免费、国内直连、不要账号</div>
+    <div class="item"><b>和风天气</b>
+      <i>天气、空气质量、<b>灾害预警</b>。免费额度 5 万次/月；预警免费，热带气旋和海洋<b>不免费</b>（所以凭据别勾"全部 API"）。
+      要 JWT 五个凭据。<b>唯一的天气源</b>，没有兜底 —— 拿不到就是那一块空着，而不是画一张错的。</i></div>
+    <div class="item"><b>新浪行情</b>
+      <i>纳指100、标普500、上证指数。不要 Key。<b>2026-09-29 按你的要求换掉了腾讯</b>（实测命中和数值一致）。
+      Yahoo 留作最后兜底，但本机实测 403，指望不上。</i></div>
+    <div class="item"><b>农历 / 节气 / 法定节假日</b>
+      <i>算出来的，不联网。节假日表按年硬编码（国办每年 11 月发下一年的），<b>表里没有的年份会退回重要节日列表</b> —— 宁可少一行也不报错日子。</i></div>
   </div>
 
   <div class="zone dev">
     <h3>Kindle Paperwhite 3</h3>
-    <div class="where">越狱 5.16.2 · /mnt/us = 插线时看到的 D: 盘</div>
+    <div class="where">越狱 5.16.2 · 长期插电源 · /mnt/us = 插线时的 D:</div>
     <div class="item"><b>bin/aistatus.sh<span class="tag">主循环</span></b>
-      <i>每分钟一班：读 <code>poll.json</code> → 按顺序试四个地址取图 → 和屏上那张比校验和，<b>一样就不重绘</b> → 贴屏 → 上报自己贴的是哪张。不睡觉（长期插电源）。</i></div>
+      <i>每分钟一班：问 <code>poll.json</code> → 取图 → 和屏上那张比校验和，<b>一样就不重绘</b> → 贴屏 → 上报自己贴的是哪张。<b>不睡觉</b>（长期插电源）。</i></div>
     <div class="item"><b>config.sh</b>
-      <i>几个旋钮：<code>DASHBOARD_URLS</code>（局域网排第一）、<code>FETCH_EVERY_MINUTES=1</code>、<code>USE_RTC_SLEEP=0</code>、安静期已关。<b>只在启动时读一次</b>，改完必须重启脚本才生效。</i></div>
+      <i>旋钮：<code>DASHBOARD_URLS</code>（现在只有电脑这一条）、<code>FETCH_EVERY_MINUTES=1</code>、<code>USE_RTC_SLEEP=0</code>、安静期已关。<b>只在启动时读一次</b>，改完必须重启脚本。</i></div>
     <div class="item"><b>fallback.png</b>
-      <i>开机 / 断网时贴的那张。<b>它以前是张空图</b>，2026-09-29 换成真的了 —— 这是"屏上没信息"的第二条路。</i></div>
+      <i>开机 / 连续取不到图时贴的那张。<b>它曾经是张空图</b>，是"屏上没信息"的第二条路，2026-09-29 换成真的了。</i></div>
     <div class="item"><b>aistatus.log</b>
-      <i>它干了什么的流水账。插着线时在 D: 里能读到，但<b>追加的行不一定立刻可见</b>（屏那边有缓存）。</i></div>
+      <i>它干了什么的流水账。插线时在 D: 能读到，但<b>追加的行不一定立刻可见</b>（屏那边有缓存）—— 所以判断屏活没活，看电脑的访问日志更准。</i></div>
     <div class="item"><b>menu.json<span class="tag line">KUAL 菜单</span></b>
-      <i>屏上点的「启动信息屏 / 停止信息屏」就在这儿。<b>插着线的时候点不了</b>。</i></div>
+      <i>屏上点的「启动信息屏 / 停止信息屏」。<b>插着线的时候点不了</b>。</i></div>
   </div>
 </div>
 
-<h2>二、箭头：谁找谁，多久一次<span>实线 = 一直在走；灰虚线 = 只在电脑开着时走</span></h2>
-<div class="flow">
-
+<h2>二、箭头：谁找谁，多久一次</h2>
+<div>
   <div class="row">
-    <div class="from">和风天气 API</div><div class="arr">→</div>
-    <div class="to"><b>GitHub Actions / 你的电脑</b>
-      <i>天气、空气质量、<b>灾害预警</b>。免费额度 5 万次/月；预警是免费的，热带气旋和海洋不是（所以凭据别勾"全部 API"）。</i></div>
+    <div class="from">和风 / 新浪</div><div class="arr">→</div>
+    <div class="to"><b>你的电脑（generate.py）</b>
+      <i>每 10 分钟一轮（<code>AUTO_BUILD_MINUTES</code>），或者你按「立刻出图」时。凭据只在进程环境里。</i></div>
   </div>
-
-  <div class="row">
-    <div class="from">腾讯 / 新浪行情</div><div class="arr">→</div>
-    <div class="to"><b>GitHub Actions / 你的电脑</b>
-      <i>纳指100、标普500、上证指数。国内直连，不用 Key。<b>2026-09-29 起按你的要求换成新浪</b>（实测三家命中一致、数值一致；Yahoo 留作兜底但本机 403）。页脚那行"行情 谁"现在是从本轮实际用的源现算的，不再写死。</i></div>
-  </div>
-
   <div class="row">
     <div class="from">generate.py</div><div class="arr">→</div>
-    <div class="to"><b>screen 分支</b>
-      <i>出一张就<b>强制覆盖</b>一次。主分支不跟踪 <code>docs/dashboard.png</code>，那只是本机预览。</i></div>
+    <div class="to"><b>docs/dashboard.png</b>
+      <i>覆盖写。同一时刻还会刷 <code>docs/debug.json</code>（自检用）和 <code>docs/yesterday.json</code>（"昨天"存档）。</i></div>
   </div>
-
-  <div class="row">
-    <div class="from">screen 分支</div><div class="arr">→</div>
-    <div class="to"><b>GitHub Pages</b>
-      <i>自动部署，约 30 秒。屏取的就是这个地址。</i></div>
-  </div>
-
   <div class="row">
     <div class="from">Kindle（每分钟）</div><div class="arr">→</div>
     <div class="to"><b>192.168.31.158:8731/dashboard.png</b>
-      <i>取图列表里的<b>第一个</b>。电脑开着时它答"当前该上屏的那一张"；电脑关了几百毫秒就失败，自动落到下一条。<b>所以快道坏了屏不会白，只是慢。</b></i></div>
+      <i>取图。<b>这是唯一的出口</b>：不合格就 404，屏拿到 404 会留着上一张好的。</i></div>
   </div>
-
   <div class="row">
     <div class="from">Kindle（每分钟）</div><div class="arr">→</div>
-    <div class="to"><b>peqw0312.github.io/…/dashboard.png</b>
-      <i>第二条出口。电脑彻底关着时，屏就靠这条活着 —— 这是"电脑可以关掉"那条要求的落点。</i></div>
+    <div class="to"><b>/poll.json 和 /report</b>
+      <i>问一句"下一班隔多久"、说一句"我刚贴的是哪张"（校验和和屏上 busybox <code>cksum</code> 同一个算法，所以两边能对上）。</i></div>
   </div>
-
-  <div class="row dim">
-    <div class="from">Kindle（每分钟）</div><div class="arr">⇢</div>
-    <div class="to"><b>:8731/poll.json 和 /report</b>
-      <i>问一句"下一班多久来"、说一句"我刚贴的是哪张"。只有电脑开着才有，缺了不影响出图，只影响调试台那两栏。</i></div>
-  </div>
-
   <div class="row">
     <div class="from">你（浏览器）</div><div class="arr">→</div>
-    <div class="to"><b>调试台 → git push / Actions / serve.py</b>
-      <i>换皮肤、立刻出图、看日志都从这儿走，<b>不用碰屏</b>。这是"以后 kindle 尽量不动它"那条要求。</i></div>
+    <div class="to"><b>调试台 → POST /publish</b>
+      <i>出图、换皮肤、看日志、看节奏，全在这一个页面上，<b>不用碰屏</b>。</i></div>
   </div>
 </div>
 
-<h2>三、两条路：一张图是怎么上屏的</h2>
+<h2>三、一张图是怎么上屏的</h2>
 <div class="paths">
   <div class="path">
-    <h3>A · 平时（电脑可能关着）</h3>
+    <h3>A · 平时（你什么都不按）</h3>
     <ol class="steps">
-      <li>GitHub 定时任务跑一轮 <code>build.yml</code>（实测 1～3 小时一次，不守时）。</li>
-      <li>Actions 在美国的机器上抓和风 + 行情，跑<b>同一份</b> <code>generate.py</code>。</li>
-      <li>产物覆盖到 <code>screen</code> 分支 → Pages 自动部署。</li>
-      <li>屏每分钟来取一次，取到就换、没换就不重绘。</li>
-      <li>所以屏上"更新 HH:MM"是<b>云端出图的时刻</b>，不是屏自己的时刻 —— 它可能比现在旧一两小时，这是设计不是坏了。</li>
+      <li>serve.py 起来就先出一张，之后<b>每 10 分钟</b>一轮。</li>
+      <li>抓和风 + 新浪 → 画 <code>docs/dashboard.png</code>。</li>
+      <li>出完<b>自检</b>：这张有没有天气那一块？没有就<b>不发</b>。</li>
+      <li>屏每分钟来取一次；取回来和屏上那张校验和一样就<b>不重绘</b>（所以不闪）。</li>
+      <li>屏上"更新 HH:MM"就是第 3 步那张的出图时刻，<b>最多比现在旧 10 分钟</b>。</li>
     </ol>
   </div>
   <div class="path">
     <h3>B · 你在调试台按「立刻出图」</h3>
     <ol class="steps">
-      <li>浏览器打本机 <code>POST /publish?skin=…</code>（同一个协议，不用 token）。</li>
-      <li><code>serve.py</code> 在<b>这台电脑上</b>跑同一段 <code>generate.py</code>，实测 1.1 秒。</li>
-      <li>出完先<b>自检</b>：这张有没有天气那一块？没有就<b>不发</b>，屏上继续是云端那张好的。</li>
-      <li>有 → 记下这张的校验和，标记"这是本机刚出的"。</li>
-      <li>屏下一分钟来取，拿到它，比对校验和，不一样才重绘。</li>
-      <li>屏顺手上报"我贴的是 <code>1105677263 49915</code>"→ 调试台真值卡显示<b>「和本机这张是同一张 ✓」</b>。</li>
+      <li>页面 <code>POST /publish?skin=…</code>（同源，不用 token）。</li>
+      <li>本机跑同一段 <code>generate.py</code>，实测 <b>1.1 秒</b>。</li>
+      <li>自检通过 → 记下这张的校验和；选过版式就写进 <code>docs/skin.txt</code>，以后每轮都按它出。</li>
+      <li>顺手刷一次皮肤墙（<code>docs/skins/</code>），并进入<b>调屏模式</b>：接下来 30 分钟屏来得更勤。</li>
+      <li>屏下一班来取（实测约 65 秒一班；更新过屏里的脚本之后能到 10 秒）。</li>
+      <li>屏上报"我贴的是 <code>337037550 60233</code>"→ 真值卡显示<b>「和本机这张是同一张 ✓」</b>。</li>
     </ol>
   </div>
 </div>
 
-<h2>四、四条不能破的规矩<span>每一条都是踩过坑换来的</span></h2>
+<h2>四、五条不能破的规矩<span>每一条都是踩过坑换来的</span></h2>
 <div class="rules">
-  <div class="rule"><b>1 · 零成本</b><i>不付费、不绑卡、不注册。和风要实名是你自己接受的例外。任何"要养一台服务器/一个服务"的方案先按这条毙掉。</i></div>
-  <div class="rule"><b>2 · 凭据绝不进仓库</b><i>仓库是公开的（屏没法带 token，只能走公开地址）。Key 只进 GitHub Secrets，或本机那个被 <code>.gitignore</code> 挡着的 env 文件。公开发布的 build.log 里也不能出现 —— 带 key 的参数一律打 <code>***</code>。</i></div>
-  <div class="rule"><b>3 · 电脑可以关掉</b><i>数据来自云端。局域网只是<b>加速器</b>，不是替代：电脑一关，屏自动落回 GitHub，什么都不用改。</i></div>
-  <div class="rule"><b>4 · 空图不出门</b><i>出空白图是<b>不会报错</b>的。所以发图那一端必须自己查：本机这张是不是我亲手出的、有没有天气。真出过一次事故 —— 一张没凭据的测试图盖在云端好图上面，屏"没信息"了几小时。</i></div>
+  <div class="rule"><b>1 · 零成本</b><i>不付费、不绑卡、不注册。和风要实名是你自己接受的例外。</i></div>
+  <div class="rule"><b>2 · 凭据绝不进仓库</b><i>仓库是公开的。Key 只在本机那个被 <code>.gitignore</code> 挡着的 env 文件里；调试台只报"哪个在、哪个不在"，值永远不经过页面。</i></div>
+  <div class="rule"><b>3 · 空图不出门</b><i>画出一张空白图是<b>不会报错</b>的。所以发图这一端必须自己查。真出过事故：一张没带凭据的测试图盖在屏上几小时。</i></div>
+  <div class="rule warn"><b>4 · 电脑不在 = 屏停在最后一张，不会自愈</b><i>这是去掉云端之后新添的一条，也是这次决定的全部代价。Windows 自动更新重启、服务被停、路由器抽风都算。所以：路由器给 <code>192.168.31.158</code> 做 DHCP 保留，是现在最该做而还没做的一件事。</i></div>
+  <div class="rule"><b>5 · 界面不许说机器没做的事</b><i>本项目反复栽在这上面：调试台喊"每 30 秒一班"而屏实际 66 秒、页脚写死"行情 腾讯"而数据早换成新浪、"距今 4 小时"其实是 46 小时。现在凡是节奏、来源、时间，一律<b>量</b>出来给。</i></div>
 </div>
 
-<h2>五、插线会发生什么<span>这是最容易把人绕晕的一节</span></h2>
+<h2>五、插线会发生什么<span>最容易把人绕晕的一节</span></h2>
 <ul class="tight">
-  <li><b>插线 = 屏变成一块 U 盘</b>（电脑上看到 D:）。这时候<b>屏幕点不动</b>，任何"点一下屏"的操作都必须先拔线。</li>
-  <li><b>正在被 ash 执行的脚本不能原地覆盖</b>（设备是 FAT，没有 inode 那层间接）。所以顺序只能是：停止 → 插线 → 拷 → 拔线 → 启动。</li>
-  <li><b>仓库工作副本是 CRLF，屏上必须是 LF</b>。直接拷会把 <code>\r</code> 带进 shell 变量里，症状是"配置看着对、行为完全不对"。拷之前要转换。</li>
+  <li><b>插线 = 屏变成一块 U 盘</b>（电脑上看到 D:）。这时候<b>屏幕点不动</b>，任何"点一下屏"都要先拔线。</li>
+  <li><b>正在被 ash 执行的脚本不能原地覆盖</b>（屏是 FAT，没有 inode 那层间接）。所以顺序只能是：屏上点「停止信息屏」→ 插线 → 拷 → 拔线 → 点「启动信息屏」。</li>
+  <li><b>仓库工作副本是 CRLF，屏上必须是 LF</b>。直接拷会把 <code>\r</code> 带进 shell 变量，症状是"配置看着对、行为完全不对"。拷之前必须转换。</li>
   <li><b><code>config.sh</code> 只在启动时读一次</b>。拷完不重启脚本 = 白拷。</li>
-  <li><b>屏睡着的时候什么都进不去</b>：射频是关的，ping 不通、也叫不醒。以前为了省电让它睡（实测能睡满 601 秒），2026-09-29 起长期插电源，<b>改成不睡了</b> —— 那一整类"屏停在旧图上几小时、日志一个字都不留"的毛病跟着没了。</li>
+  <li><b>屏睡着时什么都进不去</b>：射频是关的，ping 不通、也叫不醒。以前为了省电让它睡，2026-09-29 起长期插电源，<b>改成不睡了</b>。</li>
 </ul>
 
-<h2>六、出问题时先看哪里<span>按这个顺序查，别从屏开始猜</span></h2>
+<h2>六、出问题时按这个顺序查<span>别从屏开始猜</span></h2>
 <table>
   <tr><th>症状</th><th>先看这里</th></tr>
   <tr><td>屏上信息旧 / 缺一块</td>
-      <td>调试台 <b>屏上现在这张</b> 那一行：它会说"本机发的是云端镜像 / 本机刚出的 / 硬盘上那张不发，因为…"。这一句直接指出是哪一层。</td></tr>
+      <td>调试台<b>屏上现在这张</b>那一行 —— 它会说"本机发的是…：为什么不发"。再看<b>本机凭据</b>那栏和<b>完整构建日志</b>（现在是本机上一轮出图的真实输出）。</td></tr>
   <tr><td>屏整个停在一张不动</td>
-      <td>局域网日志 <code>.workbuddy/_serve.log</code> 有没有<b>每分钟一条</b>来自屏的请求。一条都没有 = 屏没醒 / WiFi 掉了 / 脚本没跑，跟图的内容无关。</td></tr>
-  <tr><td>怀疑云端没出新图</td>
-      <td>用 <code>api.github.com</code> 查 run 列表和 <code>screen/dashboard.png</code> 的真实大小。<b>别信这台电脑直接读到的 Pages</b> —— 它挂着 GitHub 加速工具，会按 URL 回缓存内容（实测同一分钟报出过三种字节数）。</td></tr>
-  <tr><td>按了按钮像没反应</td>
-      <td><code>GET :8731/state</code>，看 <code>can_build</code> / <code>served</code> / <code>note</code> 三个字段。按钮一律会回话，不回话就是请求没到本机。</td></tr>
+      <td>看 <code>.workbuddy/_serve.log</code> 有没有<b>每分钟一条</b> <code>curl/7.86.0</code> 的取图请求，或调试台那句"上一班隔 N 秒来一班"。<b>一条都没有 = 屏没醒 / WiFi 掉了 / 这台没在跑</b>，跟图的内容无关。</td></tr>
+  <tr><td>按了按钮没反应</td>
+      <td><code>GET :8731/state</code> 看 <code>can_build</code> / <code>served</code> / <code>note</code>。按钮一律回话；不回话就是请求没到本机（多半是页面被当成文件双击打开了）。</td></tr>
   <tr><td>换皮肤没生效</td>
-      <td>皮肤选择记在 <code>screen/skin.txt</code>（不写回 config.yaml，否则会自己触发自己）。云端那轮跑完后 <code>build.log</code> 第一行会写"本次用版式：…"。</td></tr>
+      <td><code>GET /skin.txt</code> 就是屏该用的那套；空 = 按 <code>config.yaml</code> 的默认。选过之后<b>每轮自动出图都会照它出</b>。</td></tr>
+  <tr><td>电脑重启之后屏没回来</td>
+      <td>serve.py 不是开机自启的（脚本从不改系统的开机配置）。要么手动跑一次 <code>python dashboard/serve.py</code>，要么先接受"屏停在最后一张"。</td></tr>
 </table>
 
-<h2>七、现在的状态<span>数字都是 2026-09-29 实测的，不是设计值</span></h2>
+<h2>七、现在的状态<span>2026-09-29 实测</span></h2>
 <table>
-  <tr><th>事情</th><th>实测</th></tr>
-  <tr><td>云端多久出一张</td>
-      <td><b>名义上每小时，实际 2.9 ~ 8.7 小时一次</b>（GitHub 的定时任务会攒着晚点，这是平台行为，不是我们的 bug）。所以"屏上的数据新不新"从来不取决于屏多久来取。</td></tr>
-  <tr><td>电脑开着时多久出一张</td><td><span class="ok">每 15 分钟自动一张</span>，不用点按钮。电脑一关这条自然停，屏落回上面那个节奏</td></tr>
-  <tr><td>Kindle 多久来取一遍</td>
-      <td><span class="ok">实测 62 ~ 64 秒一班</span>（配的是 1 分钟；多出的 2~4 秒是它自己取图 + 比对 + 贴屏的耗时）。取回来和屏上那张一样就不重绘，所以不闪屏。</td></tr>
-  <tr><td>网页点一下 → 屏上换掉，要多久</td>
-      <td><b>最慢约 1 分钟</b>（出图 1.6 秒 + 等它下一班来取）。插线更新一次脚本之后能压到 <b>约 10 秒</b> —— 现在设备心跳有个 60 秒地板，把"调屏模式"压平了，这个地板已经改好、在等设备侧更新。</td></tr>
-  <tr><td>换皮肤</td>
-      <td>两条路，<b>作用域不一样</b>：本机「立刻出 c1 / 立刻出 arc」是<b>临时</b>的（电脑开着才有效，一关就回到配置文件那套）；要<b>长期</b>换得走云端那份调试台的「发布」，它把选择记进 <code>screen/skin.txt</code>，以后每一轮出图都按它。</td></tr>
-  <tr><td>调试台"屏上现在这张"</td>
-      <td><span class="pend">还看不到</span> —— 设备上报的 URL 里那个空格把请求弄断了（提交 <code>8913ef4</code> 已修），要插线更新脚本才生效。在那之前这一栏只能显示"设备从没上报过"</td></tr>
-  <tr><td>路由器给 192.168.31.158 做 DHCP 保留</td>
-      <td><span class="pend">没做</span> —— IP 一漂，局域网这条快道<b>静默失效</b>，症状和"电脑没开"一模一样，很难查</td></tr>
-  <tr><td>Pages 那份调试台的「发布」按钮</td><td><span class="pend">没建 token</span>（要你在浏览器里输一次密码）。本机那份不需要它</td></tr>
+  <tr><th>事情</th><th>状态</th></tr>
+  <tr><td>本机出图（自动每 10 分钟 + 点一下 1.1 秒）</td><td><span class="ok">在跑</span>，凭据五个都在，天气/行情都真</td></tr>
+  <tr><td>屏取图</td><td><span class="ok">在跑</span>，实测 <b>62~64 秒一班</b>，取的就是本机这张</td></tr>
+  <tr><td>版式</td><td><span class="ok">arc</span>（信息终端）。皮肤墙两张真图，点一张=预览+选中</td></tr>
+  <tr><td>行情源</td><td><span class="ok">新浪</span>（腾讯已按你的要求去掉，页脚那行改成从实际命中的源现算）</td></tr>
+  <tr><td>倒计时</td><td><span class="ok">两条都显示</span>：距国庆节 2 天 · 距寒露 9 天（以前各版式只拿一条）</td></tr>
+  <tr><td>"昨天"那一格</td><td><span class="pend">明天起出现</span> —— 存档改成两格了，但 09-28 那份已被今天覆盖，而和风的时光机接口调不通，补不回来</td></tr>
+  <tr><td>屏里跑的脚本</td><td><span class="pend">比仓库旧两处</span>：上报的 URL 里那个空格（导致"设备从没上报过"）、心跳 60 秒地板（把"更勤"压平）。仓库里都修好了，<b>要插一次线</b></td></tr>
+  <tr><td>屏的取图地址</td><td><span class="pend">还是四条</span>（含三个云端出口）。仓库里已改成只有电脑这一条，<b>同一次插线一起带上</b></td></tr>
+  <tr><td>路由器 DHCP 保留 192.168.31.158</td><td><span class="no">没做 —— 现在是单点</span>，IP 一漂屏就取不到图，而且症状和"电脑没开"一模一样</td></tr>
+  <tr><td>GitHub 仓库 / Pages / screen 分支</td><td><span class="pend">留着不动</span>：仓库继续当代码备份；Pages 那份会停在最后一张，没人再读它。要不要真删掉等你说</td></tr>
 </table>
 
 <div class="foot">
   看图的人不用记路径，记这三句就够：<br>
   ① 屏<b>每分钟</b>去取一张别人画好的图，它自己不算任何数据；<br>
-  ② 画图这件事<b>云端一直在做</b>、<b>你的电脑开着时做得更快</b>；<br>
-  ③ 屏幕上出现的任何一块空白，都是<b>画图那一步没拿到数据</b>，不是屏坏了。
+  ② 画图这件事<b>只有你这台电脑在做</b> —— 它开着屏就是新的，它不在屏就停住；<br>
+  ③ 屏上出现的任何一块空白，都是<b>画图那一步没拿到数据</b>，不是屏坏了。
 </div>
 
 </div>
