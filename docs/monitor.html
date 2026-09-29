@@ -82,7 +82,8 @@
     <div id="sched">正在读取…</div>
     <p class="k" style="margin-bottom:0">
       两个时钟：<b>屏来取</b>是算得准的（下面这张表，读自屏的配置）；<b>本机出图</b>
-      每 10 分钟一轮，所以"下次上屏"只是它来取的时刻，取到的最多比现在旧 10 分钟。
+      每 <span id="autoEvery">—</span> 一轮，所以"下次上屏"只是它来取的时刻，
+      取到的最多比现在旧那么久。
     </p>
   </div>
 
@@ -321,8 +322,11 @@ async function load(showLog) {
       const mins = Math.round((Date.now() - new Date(st.mtime.replace(' ', 'T')).getTime()) / 60000);
       const ageEl = document.getElementById('age');
       ageEl.textContent = mins < 60 ? `${mins} 分钟` : `${(mins / 60).toFixed(1)} 小时`;
-      // 自动出图每 10 分钟一轮：超过两轮没动就是它死了，标红给人看
-      ageEl.className = mins > 60 ? "bad" : (mins > 25 ? "warn" : "ok");
+      // 门槛由服务报的间隔算，不抄死数字：改了间隔还按 25 分钟标黄就是骗人
+      const every = st.auto_build_minutes || 60;
+      const ae = document.getElementById('autoEvery');
+      if (ae) ae.textContent = every >= 60 ? `${every / 60} 小时` : `${every} 分钟`;
+      ageEl.className = mins > every * 2 ? "bad" : (mins > every * 1.5 ? "warn" : "ok");
     }
   } catch (e) { /* 服务没起，留着上一次的数字就行 */ }
 

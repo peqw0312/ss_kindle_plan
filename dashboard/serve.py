@@ -17,7 +17,7 @@
 空图不发：设备拿到 404 会留着上一张好的，这比贴一张空图强，也是现在唯一的安全网。
 
   python dashboard/serve.py                     # 监听 0.0.0.0:8731
-  python dashboard/serve.py --auto-build 10     # 每 10 分钟自动出一张（0 = 关）
+  python dashboard/serve.py --auto-build 60     # 每 60 分钟自动出一张（0 = 关）
 
 路由：
   GET  /                调试台（docs/monitor.html）
@@ -239,7 +239,7 @@ def current_image():
 BOOST_SECONDS = 10          # 调屏模式下设备每隔多少秒来取一次。
 # 取 10 是因为不睡觉时 secure_sleep 是按 10 秒一段睡的 —— 填 12 会被凑成 20。
 BOOST_WINDOW = 30 * 60      # 调屏持续多久，到点自己回落到平时的 1 分钟
-AUTO_BUILD_MINUTES = 10     # 每隔这么久自动出一张（0 = 关）。现在这是屏新旧的唯一决定者
+AUTO_BUILD_MINUTES = 60     # 每隔这么久自动出一张（0 = 关）。现在这是屏新旧的唯一决定者
 
 
 def write_poll(boost_until: int) -> None:
@@ -476,6 +476,9 @@ class Handler(BaseHTTPRequestHandler):
             info["creds"] = creds_state()
             ok_c, why_c = can_build()
             info["can_build"] = {"ok": ok_c, "why": why_c}
+            # 间隔也一起给：调试台那些"多久没更新算不正常"的门槛必须由它算，
+            # 抄成死数字就会在改了间隔之后继续按旧的标红/标绿
+            info["auto_build_minutes"] = AUTO_BUILD_MINUTES
             info["skin"] = (SKIN_STATE.read_text(encoding="utf-8").strip()
                             if SKIN_STATE.exists() else "")
             if IMAGE.exists():

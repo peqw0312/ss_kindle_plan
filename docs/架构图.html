@@ -87,7 +87,7 @@
     <h3>你的电脑</h3>
     <div class="where">C:\Users\peqw0\WorkBuddy\Kindle Plan<br>局域网 IP 192.168.31.158 · 监听 :8731</div>
     <div class="item"><b>dashboard/serve.py<span class="tag">唯一出图端</span></b>
-      <i>常驻。四件事：① 每 10 分钟自动出一张，起服务时先出一张；② 答屏的取图请求，只发"有内容的那张"；③ 用 <code>/poll.json</code> 告诉屏下一班多久来；④ 收屏上报的"我贴的是哪张"。</i></div>
+      <i>常驻。四件事：① 每 1 小时自动出一张（`AUTO_BUILD_MINUTES`），起服务时先出一张；② 答屏的取图请求，只发"有内容的那张"；③ 用 <code>/poll.json</code> 告诉屏下一班多久来；④ 收屏上报的"我贴的是哪张"。</i></div>
     <div class="item"><b>dashboard/generate.py<span class="tag">画图</span></b>
       <i>抓数据 + 画成 1072×1448 的 8 级灰度 PNG。实测 1.1 秒。</i></div>
     <div class="item"><b>docs/monitor.html<span class="tag line">调试台</span></b>
@@ -138,7 +138,7 @@
   <div class="row">
     <div class="from">和风 / 新浪</div><div class="arr">→</div>
     <div class="to"><b>你的电脑（generate.py）</b>
-      <i>每 10 分钟一轮（<code>AUTO_BUILD_MINUTES</code>），或者你按「立刻出图」时。凭据只在进程环境里。</i></div>
+      <i>每 1 小时一轮（<code>AUTO_BUILD_MINUTES</code>），或者你按「立刻出图」时。凭据只在进程环境里。</i></div>
   </div>
   <div class="row">
     <div class="from">generate.py</div><div class="arr">→</div>
@@ -167,11 +167,11 @@
   <div class="path">
     <h3>A · 平时（你什么都不按）</h3>
     <ol class="steps">
-      <li>serve.py 起来就先出一张，之后<b>每 10 分钟</b>一轮。</li>
+      <li>serve.py 起来就先出一张，之后<b>每 1 小时</b>一轮。</li>
       <li>抓和风 + 新浪 → 画 <code>docs/dashboard.png</code>。</li>
       <li>出完<b>自检</b>：这张有没有天气那一块？没有就<b>不发</b>。</li>
       <li>屏每分钟来取一次；取回来和屏上那张校验和一样就<b>不重绘</b>（所以不闪）。</li>
-      <li>屏上"更新 HH:MM"就是第 3 步那张的出图时刻，<b>最多比现在旧 10 分钟</b>。</li>
+      <li>屏上"更新 HH:MM"就是第 3 步那张的出图时刻，<b>最多比现在旧 1 小时</b>。要立刻换就按「立刻出图」。</li>
     </ol>
   </div>
   <div class="path">
@@ -223,7 +223,7 @@
 <h2>七、现在的状态<span>2026-09-29 实测</span></h2>
 <table>
   <tr><th>事情</th><th>状态</th></tr>
-  <tr><td>本机出图（自动每 10 分钟 + 点一下 1.1 秒）</td><td><span class="ok">在跑</span>，凭据五个都在，天气/行情都真</td></tr>
+  <tr><td>本机出图（自动每 1 小时 + 点一下 1.1 秒）</td><td><span class="ok">在跑</span>，凭据五个都在，天气/行情都真</td></tr>
   <tr><td>屏取图</td><td><span class="ok">在跑</span>，实测 <b>62~64 秒一班</b>，取的就是本机这张</td></tr>
   <tr><td>版式</td><td><span class="ok">arc</span>（信息终端）。皮肤墙两张真图，点一张=预览+选中</td></tr>
   <tr><td>行情源</td><td><span class="ok">新浪</span>（腾讯已按你的要求去掉，页脚那行改成从实际命中的源现算）</td></tr>
