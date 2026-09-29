@@ -448,9 +448,18 @@ async function loadTruth() {
     LAN.state = j;
     lanState();          // 实测节奏和这条用的是同一份 /state，一起刷
     const d = j.device;
-    // 先把"这台电脑会发哪一张"说清楚：快道可能正在镜像云端，而不是硬盘上那个文件
+    // 先把"这台电脑会发哪一张"说清楚：它可能因为不合格而根本不发（404）
     const served = `本机发的是${j.served || '？'}${j.note ? ' —— ' + j.note : ''}。`;
-    if (!d) { el.textContent = served + '设备从没上报过 —— 它还没连上这台电脑（脚本没更新，或电脑当时没开）。'; return; }
+    if (!d) {
+      // 分两种情况说，别一杆子打死："没连上"和"连上了但这一步没做"是两回事，
+      // 而屏是不是活着，本机访问日志比猜准得多
+      const seen = j.device_seen;
+      el.textContent = served + (seen && seen.ago != null
+        ? ` 屏 ${seen.ago} 秒前来取过图（隔 ${seen.gap || '?'} 秒一班），但它不上报"贴的是哪张"`
+          + ' —— 屏里那份脚本还没有这一步，插线更新后就有了。'
+        : ' 屏从没来取过图，也没上报过 —— 先确认它在不在取这台电脑（见下面那行实测）。');
+      return;
+    }
     const mins = Math.max(0, Math.round((Date.now() / 1000 - (d.seen || 0)) / 60));
     const src = d.src === 'none' ? '没拿到图' : d.src;
     if (d.ok !== '1') { el.textContent = served + `设备 ${mins} 分钟前上报：这一轮没拿到图（来源 ${src}）。屏上还是它上一张成功的。`; return; }
