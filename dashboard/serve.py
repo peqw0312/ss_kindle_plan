@@ -1,31 +1,35 @@
 #!/usr/bin/env python3
-"""局域网快道：点一下就出图，Kindle 下一班来取（平时 1 分钟内，调屏时 12 秒内）。
+"""这台电脑是这块屏**唯一的出图端**：抓数据、画图、答给 Kindle。
 
-为什么还要它：GitHub 那条路"出图"要跑一轮 Actions（约 1 分钟），前面还压着一层
-CDN 缓存。这台电脑开着的时候，直接让它跑同一段 generate.py，几秒就有图。
+2026-09-29 改的成本：原来出图在 GitHub Actions，用户按「反正电脑每天都开机，
+慢吞吞的、网络还一堆问题」把它去掉了。换来两个必须一直记得的后果：
 
-⚠️ 它是**加速器，不是替代**。设备那边 DASHBOARD_URLS 是"按顺序试"，局域网排在
-第一个，电脑关着 / 服务没起时这一条几百毫秒就失败，自动落到 GitHub —— 所以这个
-服务停了，屏只是变慢，不会白屏。原来"电脑不是服务器"的约束没有被推翻。
+  · **电脑不在 = 屏停在最后一张，而且不会自愈。** 没有云端可退了。
+    Windows 自动更新重启、服务被我停了、路由器抽风，都算"电脑不在"。
+  · 屏上数据的新旧，完全由下面 AUTO_BUILD_MINUTES 那一轮决定。
 
-⚠️ 本机出图要有和风的 Key（环境变量 / 命令行带，仓库里不能写）。没有它时 generate.py
-会**成功**画出一张没有天气的图 —— 所以这里出图后要自检，空图不发，屏上继续是云端那张。
+它同时是设备的取图地址、"下一班多久来"的答复方、和调试台本体（调试台必须由它
+托管才谈得上点一下推出 —— Pages 那份是 HTTPS，调 http://192.168.x.x 会被浏览器
+按混合内容拦掉，那是浏览器的规则，不是写法能绕的）。
+
+⚠️ 本机出图要有和风的凭据（起服务时从 .workbuddy/_qweather_local.env 读，不进仓库）。
+没有它时 generate.py 会**成功**画出一张没有天气的图 —— 所以出图后必须自检，
+空图不发：设备拿到 404 会留着上一张好的，这比贴一张空图强，也是现在唯一的安全网。
 
   python dashboard/serve.py                     # 监听 0.0.0.0:8731
-  python dashboard/serve.py --port 8731 --poll-hint 10
-
-它只**加速**，不改云端默认：按这里发布的图立刻可取，但 config.yaml 里写的版式不变，
-电脑一关、设备落回 GitHub 时，屏上会变回配置文件那套。想把默认也换掉，就去 Pages
-那个调试台按「发布」（它触发一轮 Actions，把选择记进 screen 分支）。
+  python dashboard/serve.py --auto-build 10     # 每 10 分钟自动出一张（0 = 关）
 
 路由：
-  GET  /                一个极简控制台（三个按钮）
-  GET  /dashboard.png   设备来取图。**发的是"有内容的最新那张"**：本机亲手出的、
-                        自检有数据的图优先，否则原样转发云端那张 —— 硬盘上恰好躺着
-                        一个旧文件不等于那是该上屏的那张
-  GET  /status          现在这张图的时间/大小/用的哪套版式
-  GET  /state           设备上报 + 本机这一趟会发哪张 + 两者是否同一张
-  POST /publish?skin=…  现场出一张（skin 省略 = 用配置文件里那套）
+  GET  /                调试台（docs/monitor.html）
+  GET  /dashboard.png   设备来取图。只发"有内容的那张"，不合格就 404
+  GET  /config.sh       设备那份配置（调试台的排班表照着它算）
+  GET  /skin.txt        屏上现在挂哪套版式（记在本机，不再记在云端分支）
+  GET  /skins/…         皮肤墙：本机出的各版式真图 + manifest.json
+  GET  /poll.json       设备每轮问一句"接下来隔多久来"
+  GET  /report          设备上报"屏上贴的是哪张"（cksum 和 busybox 对得上）
+  GET  /state           本机这一趟会发哪张 + 设备上报 + 两者是否同一张
+  POST /publish?skin=…  现场出一张（skin 省略 = 用配置文件里那套；选过的会记住）
+  POST /boost           进入调屏模式：接下来 30 分钟屏来得更勤
 
 只在家庭局域网里用：默认监听所有网卡且**没有任何鉴权** —— 同一 WiFi 下任何人都能
 按那个发布按钮。想收紧就 `--bind 127.0.0.1`（但那样 Kindle 就取不到了）。
@@ -49,7 +53,6 @@ IMAGE = ROOT / "docs" / "dashboard.png"
 CONFIG = ROOT / "dashboard" / "config.yaml"
 GEN = ROOT / "dashboard" / "generate.py"
 DEBUG = ROOT / "docs" / "debug.json"
-BUILT = ROOT / "docs" / "dashboard.built.json"
 
 # 和 render.py 的 Renderer.LAYOUTS 对齐。这里抄一份是因为不想为了三个名字
 # 在设备/服务两侧都依赖导入生产代码；对不上的话 generate.py 自己会退回默认
@@ -58,8 +61,10 @@ LAYOUTS = ("c1", "arc")
 
 STATE = {"last_build": None, "last_error": None, "skin": None, "seconds": None}
 
-REPO_NAME = "ss_kindle_plan"
-PAGES_HOST = "peqw0312.github.io"
+SKINS = ROOT / "docs" / "skins"                  # 皮肤墙：本机出的那几张真图
+SKIN_STATE = ROOT / "docs" / "skin.txt"          # 屏上现在挂哪套版式（没人选过=空）
+DEVICE_CONFIG = ROOT / "kindle" / "extensions" / "aistatus" / "config.sh"
+SKINS_TOOL = ROOT / "dashboard" / "tools" / "skins.py"
 MONITOR = ROOT / "docs" / "monitor.html"
 POLL = ROOT / "docs" / "poll.json"
 DEVSTATE = ROOT / "docs" / "device_state.json"
@@ -120,7 +125,7 @@ def can_build() -> tuple[bool, str]:
 
     为什么先问这个：和风的 Key 只在 GitHub Secrets 里（仓库是公开的，不能写进配置）。
     本机没有它时 generate.py 照样"成功"，只是画出一张没有天气的图 —— 而局域网地址排在
-    设备取图列表第一个，这张空图会盖掉云端那张好的。按钮按下去之前就该说清楚。
+    而本机是唯一的出图端 —— 没有第二个源可以盖、也没有别处可以退。按钮按下去之前就该说清楚。
     """
     e = os.environ
     if not (e.get("QWEATHER_HOST") or "").strip():
@@ -137,8 +142,8 @@ def can_build() -> tuple[bool, str]:
 def empty_reason() -> str:
     """本机这张图是不是"没内容"。出空白图不会报错，所以只能自己查。
 
-    为什么必须查：局域网地址排在 DASHBOARD_URLS **第一个**，本机这张会盖掉云端那张
-    好的 —— 出一次没有数据的图，屏上就是一片空。真发生过。
+    为什么必须查：这台是唯一的出图端，发出去什么屏上就是什么。出一次没有数据的图，
+    屏上就是一片空 —— 2026-09-27 真发生过（一次没带凭据的测试出图盖在屏上几小时）。
     """
     try:
         d = json.loads(DEBUG.read_text(encoding="utf-8"))
@@ -147,71 +152,6 @@ def empty_reason() -> str:
     if not (d.get("counts") or {}).get("weather"):
         return "这张图没有天气那一块（出图时没拿到和风的数据）"
     return ""
-
-
-def built_hash() -> str:
-    """上一次**在这个服务上**按「立刻出图」跑出来的那张是谁。"""
-    try:
-        return json.loads(BUILT.read_text(encoding="utf-8")).get("hash", "")
-    except Exception:
-        return ""
-
-
-def mark_built() -> str:
-    h = cksum_of(IMAGE)
-    try:
-        BUILT.write_text(json.dumps({"hash": h, "at": int(time.time())}), encoding="utf-8")
-    except Exception:
-        pass
-    return h
-
-
-MIRROR = {"at": 0.0, "data": b"", "lm": 0.0, "err": ""}
-MIRROR_TTL = 60.0
-
-
-def cloud_image() -> dict:
-    """云端那张（GitHub Pages），带 60 秒缓存。
-
-    用 Pages 不用 raw.githubusercontent：这台机器上 raw 那条直接连不通（实测 000），
-    Pages 是通的 —— 和 DASHBOARD_URLS 里的顺序一致。
-
-    ⚠️ URL 上必须带一次性参数。这台电脑挂着 GitHub 加速器，它会**按 URL 缓存**：
-    实测同一时刻 api.github.com 说屏那支是 49728 字节，而不带参数的 Pages 请求返回过
-    47158 / 56866 两种别的版本。设备只信"局域网给的那张"，被缓存钉住就是几小时旧图，
-    而且调试台和屏上一起旧 —— 看不出来，比白屏更难查。
-    """
-    url = f"https://{PAGES_HOST}/{REPO_NAME}/dashboard.png?t={int(time.time())}"
-    now = time.time()
-    if MIRROR["data"] and now - MIRROR["at"] < MIRROR_TTL:
-        return MIRROR
-    try:
-        import urllib.error
-        import urllib.request
-        req = urllib.request.Request(url, headers={"User-Agent": "aistatus-lan-lane"})
-        if MIRROR["data"] and MIRROR["lm"]:
-            req.add_header("If-Modified-Since",
-                           time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(MIRROR["lm"])))
-        try:
-            with urllib.request.urlopen(req, timeout=15) as r:
-                MIRROR["data"] = r.read()
-                MIRROR["err"] = ""
-                # lm 只认云端给的 Last-Modified：没有这个头就当不知道云端那张多新，
-                # 此时本机刚出的那张优先（current_image 里 lm=0 走这个分支）
-                MIRROR["lm"] = 0.0
-                lm = r.headers.get("Last-Modified")
-                if lm:
-                    from email.utils import parsedate_to_datetime
-                    MIRROR["lm"] = parsedate_to_datetime(lm).timestamp()
-        except urllib.error.HTTPError as exc:
-            if exc.code != 304:
-                raise
-            MIRROR["err"] = ""       # 304 = 还是我缓存里那张，不是故障
-        MIRROR["at"] = now
-    except Exception as exc:
-        MIRROR["err"] = f"{type(exc).__name__}: {exc}"
-        MIRROR["at"] = now           # 失败也歇 60 秒，别每次设备来取都重连一遍
-    return MIRROR
 
 
 DEVICE_SEEN = {"at": 0.0, "gap": 0, "ua": ""}
@@ -237,34 +177,34 @@ def note_device_fetch(handler) -> None:
 def current_image():
     """这一趟给设备哪一张。返回 (bytes, 是谁, 一句话说明)。
 
-    规矩只有一条：**这张必须是"有内容的最新那张"**，而不是"本机硬盘上恰好躺着的
-    那张"。所以：
-      1. 只有这个服务亲手出的、且自检有数据的、且不比云端旧的图，才算本机这张有效；
-      2. 否则发云端那张（局域网只是加速器，内容仍以云端为准）；
-      3. 云端也取不到时，退而发本机这张，但把"可能是旧的/空的"写在说明里。
+    2026-09-29 起这台电脑是**唯一的出图端**（GitHub 那条按用户要求去掉了），所以
+    没有"退而发云端那张"这回事了。规矩反而更简单，只剩一条：
+
+      **这张必须是有内容的那张。** 不合格就回 404 —— 设备拿到 404 会**留着上一张
+      好的**，这比贴一张空图强，也是新架构下唯一的安全网。
+
+    另一件事必须说清楚而不是藏起来：这张多久没更新了。自动出图那条要是悄悄死了，
+    屏会停在一张越来越旧的图上，而它看起来完全正常 —— 和本项目反复栽的那个坑
+    （"界面说的和机器做的不一样"）一模一样。
     """
-    m = cloud_image()
-    if IMAGE.exists():
-        st = IMAGE.stat()
-        mine = cksum_of(IMAGE)
-        if mine and mine == built_hash() and st.st_size:
-            if not m["lm"] or st.st_mtime >= m["lm"]:
-                return IMAGE.read_bytes(), "本机刚出的", ""
-            if m["data"]:
-                return m["data"], "云端镜像", "本机那张虽然是在这里出的，但云端后来又出了一班更新的"
-            return IMAGE.read_bytes(), "本机那张（云端取不到）", ""
-        why = "硬盘上那张不发：" + (empty_reason() or "它不是在调试台按「立刻出图」出的")
-        if m["data"]:
-            return m["data"], "云端镜像", why
-        return IMAGE.read_bytes(), "硬盘上那张（退路）", why + f"，而云端取不到（{m['err']}）"
-    if m["data"]:
-        return m["data"], "云端镜像", "本机还没有图"
-    return b"", "", f"本机没有图，云端也取不到（{m['err']}）"
+    if not IMAGE.exists():
+        return b"", "", f"本机还没出过图（自动出图每 {AUTO_BUILD_MINUTES} 分钟一轮，也可以按「立刻出图」）"
+    body = IMAGE.read_bytes()
+    if not body:
+        return b"", "", "docs/dashboard.png 是个空文件，不发"
+    bad = empty_reason()
+    if bad:
+        return b"", "", bad + " —— 这张不发，屏会留着上一张好的"
+    age = int(time.time() - IMAGE.stat().st_mtime)
+    note = ""
+    if age > AUTO_BUILD_MINUTES * 120:          # 两轮都没出新图 = 自动出图可能死了
+        note = f"这张已经 {age // 60} 分钟没更新过，查自动出图那一行日志"
+    return body, "本机出的", note
 
 BOOST_SECONDS = 10          # 调屏模式下设备每隔多少秒来取一次。
 # 取 10 是因为不睡觉时 secure_sleep 是按 10 秒一段睡的 —— 填 12 会被凑成 20。
 BOOST_WINDOW = 30 * 60      # 调屏持续多久，到点自己回落到平时的 1 分钟
-AUTO_BUILD_MINUTES = 15     # 电脑开着时，每隔这么久自动出一张（0 = 关）
+AUTO_BUILD_MINUTES = 10     # 每隔这么久自动出一张（0 = 关）。现在这是屏新旧的唯一决定者
 
 
 def write_poll(boost_until: int) -> None:
@@ -292,31 +232,11 @@ def boost_now() -> int:
     return until
 
 
-def pull_yesterday_archive() -> None:
-    """出图前把云端那份「昨天存档」拉下来，覆盖本机这份。
-
-    为什么：屏上有没有"昨天"那一格，取决于读到的存档是哪一份。云端 workflow
-    出图前也会拉一次（`.github/workflows/build.yml` 的「取回昨天的存档」）。两边
-    各自攒的话，本机这张和云端那张会一格有一格没有，换来换去像版式在抽风。
-    拉不到就算了 —— 本机那份照样能滚，不影响出图。
-    """
-    import urllib.request
-    url = f"https://{PAGES_HOST}/{REPO_NAME}/yesterday.json?t={int(time.time())}"
-    try:
-        with urllib.request.urlopen(url, timeout=15) as r:
-            body = r.read()
-        json.loads(body.decode("utf-8"))          # 不是合法 JSON 就别覆盖好的那份
-        YESTERDAY.write_bytes(body)
-    except Exception:
-        pass
-
-
 def build(skin: str | None) -> tuple[bool, str]:
     """跑一次出图。返回 (成没成, 给人看的一句话)。"""
     ok_creds, why = can_build()
     if not ok_creds:
-        return False, why + " —— 出了也是一张没有天气的图，不发。要立刻换新内容请去云端那份调试台按发布。"
-    pull_yesterday_archive()
+        return False, why + " —— 出了也是一张没有天气的图，不发。"
     cmd = [sys.executable, str(GEN), "--config", str(CONFIG), "--no-html"]
     if skin:
         cmd += ["--layout", skin]
@@ -334,12 +254,42 @@ def build(skin: str | None) -> tuple[bool, str]:
     reason = empty_reason()
     if reason:
         STATE["last_error"] = reason
-        return False, f"本机出了图，但**不发**：{reason}。屏上仍是云端那张好的。"
+        return False, f"本机出了图，但**不发**：{reason}。屏会留着上一张好的。"
     STATE["last_error"] = None
-    mark_built()
     STATE["last_build"] = datetime.now().strftime("%H:%M:%S")
     STATE["skin"] = skin or "（配置文件的默认）"
+    if skin:
+        # 记住这次选的版式：下一轮自动出图也照它出。以前这个记忆存在云端 screen
+        # 分支的 skin.txt 里，现在这台是唯一出图端，存在自己旁边就行。
+        try:
+            SKIN_STATE.write_text(skin, encoding="utf-8")
+        except Exception:
+            pass
+        rebuild_wall()
     return True, f"已出图（{STATE['seconds']}s）"
+
+
+def rebuild_wall() -> None:
+    """刷新皮肤墙（docs/skins/）。只在**手动**按「立刻出图」之后跑。
+
+    为什么不跟着自动出图一起跑：那要把所有数据源再抓一遍，白白翻倍。皮肤墙是
+    给人挑版式用的，人在挑的时候才会看它。
+    """
+    try:
+        subprocess.run([sys.executable, str(SKINS_TOOL)], capture_output=True,
+                       text=True, timeout=240, cwd=str(ROOT))
+        print("  [皮肤墙] 已刷新", file=sys.stderr)
+    except Exception as exc:
+        print(f"  [皮肤墙] 没刷成：{type(exc).__name__}: {exc}", file=sys.stderr)
+
+
+def chosen_skin() -> str | None:
+    """这一轮该用哪套版式：有人在调试台选过就用它，否则交给配置文件。"""
+    try:
+        name = SKIN_STATE.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    return name if name in LAYOUTS else None
 
 
 def auto_build_loop(minutes: int) -> None:
@@ -348,50 +298,13 @@ def auto_build_loop(minutes: int) -> None:
     为什么要有它：**GitHub 的定时任务不守时**。名义上每小时，实测 2026-09-28/29
     两天里是 2.9 ~ 8.7 小时一次。屏改成每分钟来取之后，"取"这一端已经不是瓶颈了，
     慢的是"出" —— 取到的可能是六小时前那张。数据要新只能让出图这一端跑得更勤。
-    电脑关着时这条自然停，屏自动落回云端节奏，所以"数据来自云端而不是我的电脑"
-    那条要求没有被动过：这台只是把等待时间压短，不是替代。
+    2026-09-29 起这条就是**唯一**的出图节奏（云端那套按用户要求去掉了）：服务停了、
+    电脑重启了，屏就停在最后一张不会自愈，所以它死了必须能在调试台上看见。
     """
     while True:
         time.sleep(minutes * 60)
-        ok, msg = build(None)
+        ok, msg = build(chosen_skin())
         sys.stderr.write(f"  [自动出图 {'成功' if ok else '没成'}] {msg}\n")
-
-
-PAGE = """<!doctype html><meta charset=utf-8>
-<title>信息屏 · 局域网快道</title>
-<style>
- body{font:15px/1.6 system-ui,"Segoe UI",sans-serif;margin:28px;max-width:560px;color:#1c1917}
- button{font:inherit;padding:8px 14px;margin:4px 8px 4px 0;border:1px solid #d6d3d1;
-        border-radius:6px;background:#fff;cursor:pointer}
- #out{margin-top:14px;padding:10px;border:1px solid #e7e5e4;border-radius:6px;
-      font:13px ui-monospace,Consolas,monospace;white-space:pre-wrap;min-height:2.4em}
- img{margin-top:16px;width:100%;max-width:300px;border:1px solid #d6d3d1}
- .k{color:#78716c;font-size:13px}
-</style>
-<h1>信息屏 · 局域网快道</h1>
-<p class="k">按一下就现场出图。Kindle 每 __STEP__ 分钟来取一次，所以最多等那么久就上屏；
-它取的是这个服务的 <code>/dashboard.png</code>。电脑关着时设备自动改走 GitHub。</p>
-<div>
-  <button onclick="pub('')">出一张（默认版式）</button>
-  __BUTTONS__
-</div>
-<div id="out">还没跑过。</div>
-<img src="/dashboard.png?t=0" alt="当前这张">
-<script>
-async function pub(skin) {
-  const out = document.getElementById('out');
-  out.textContent = '正在出图…';
-  const t0 = Date.now();
-  try {
-    const r = await fetch('/publish' + (skin ? '?skin=' + skin : ''), {method: 'POST'});
-    const j = await r.json();
-    out.textContent = (j.ok ? '✓ ' : '✗ ') + j.msg
-      + (j.ok ? '\\n屏上最快 ' + Math.round((Date.now()-t0)/1000) + ' 秒后取到（设备下一班）' : '');
-    document.querySelector('img').src = '/dashboard.png?t=' + Date.now();
-  } catch (e) { out.textContent = '请求失败：' + e.message; }
-}
-</script>
-"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -426,21 +339,30 @@ class Handler(BaseHTTPRequestHandler):
                 return
             note_device_fetch(self)
             return
-        if path.startswith("/skins/") or path == "/skin.txt":
-            # 皮肤墙要 fetch manifest.json 拿清单，页面也要读 skin.txt 才知道
-            # 屏上现在挂的是哪套。<img> 跨域能显示，fetch 不行 —— GitHub Pages
-            # 不发 Access-Control-Allow-Origin。所以在这里转一道手，页面只用相对路径。
-            import urllib.request
-            url = f"https://{PAGES_HOST}/{REPO_NAME}{path}?t={int(time.time())}"
-            try:
-                with urllib.request.urlopen(url, timeout=15) as r:
-                    body = r.read()
-                ctype = ("application/json" if path.endswith(".json")
-                         else "text/plain; charset=utf-8" if path.endswith(".txt")
-                         else "image/png")
-                self._send(200, body, ctype)
-            except Exception:
+        if path.startswith("/skins/"):
+            # 皮肤墙：本机 docs/skins/ 里的那几张真图。以前是代理 GitHub Pages 的
+            # （Pages 不发 CORS 头，fetch 拿不到），现在图就在本机，直接读盘。
+            name = path[len("/skins/"):].replace("..", "")
+            f = SKINS / name
+            if not name or not f.is_file():
                 self._send(404, b"not in the wall", "text/plain")
+                return
+            ctype = "application/json" if name.endswith(".json") else "image/png"
+            self._send(200, f.read_bytes(), ctype)
+            return
+        if path == "/skin.txt":
+            # 屏上现在挂的是哪套版式。以前记在云端 screen 分支，现在记在本机这个
+            # 文件里；没人选过就是空，页面据此显示"用的是配置文件那套"。
+            body = SKIN_STATE.read_bytes() if SKIN_STATE.exists() else b""
+            self._send(200, body, "text/plain; charset=utf-8")
+            return
+        if path == "/config.sh":
+            # 调试台的排班表要知道设备多久来取一班。以前从 raw.githubusercontent
+            # 读仓库里那份，现在直接给本机这份 —— 反正拷进设备的就是它。
+            if DEVICE_CONFIG.is_file():
+                self._send(200, DEVICE_CONFIG.read_bytes(), "text/plain; charset=utf-8")
+            else:
+                self._send(404, b"no config.sh", "text/plain")
             return
         if path == "/report":
             # 设备上报"屏上现在贴的是哪张"。GET 带参数就行：设备那边只有 curl，
@@ -458,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/state":
             # 把设备上报的、**这一趟真正会发出去的那张**、算好的比对结果一起给调试台。
-            # 比对必须用"发出去的那张"而不是硬盘上那个文件：局域网快道可能正在发云端镜像。
+            # 比对必须用"这一趟真正发出去的那张"，而不是硬盘上那个文件 —— 它可能不合格。
             out = {"device": None, "served": "", "hash": "", "note": "", "empty": empty_reason()}
             ok_creds, why = can_build()
             out["can_build"] = {"ok": ok_creds, "why": why}
@@ -489,7 +411,8 @@ class Handler(BaseHTTPRequestHandler):
             info["image"] = str(IMAGE)
             info["exists"] = IMAGE.exists()
             info["empty"] = empty_reason()
-            info["adopted"] = bool(IMAGE.exists()) and cksum_of(IMAGE) == built_hash()
+            info["skin"] = (SKIN_STATE.read_text(encoding="utf-8").strip()
+                            if SKIN_STATE.exists() else "")
             if IMAGE.exists():
                 st = IMAGE.stat()
                 info["mtime"] = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
@@ -497,17 +420,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(info, ensure_ascii=False).encode(), "application/json")
             return
         if path in ("/", "/index.html"):
-            # 调试台本体在这里也发一份：同一台机器、同一个协议，才谈得上"点一下推给
-            # 设备"。Pages 那份是 HTTPS，去调 HTTP 的局域网接口会被浏览器按混合内容
-            # 拦掉 —— 这是浏览器的规则，不是我们写法能绕的。
+            # 调试台只有这一份：必须由本机托管，才谈得上"点一下推给屏"。
             if MONITOR.exists():
                 self._send(200, MONITOR.read_bytes(), "text/html; charset=utf-8")
-                return
-            step = getattr(self.server, "poll_hint", "?")
-            buttons = "".join(
-                f'<button onclick="pub(\'{l}\')">发布 {l}</button>' for l in LAYOUTS)
-            html = PAGE.replace("__STEP__", str(step)).replace("__BUTTONS__", buttons)
-            self._send(200, html.encode(), "text/html; charset=utf-8")
+            else:
+                self._send(404, "找不到 docs/monitor.html，调试台打不开；"
+                                "屏的取图不受影响".encode(), "text/plain; charset=utf-8")
             return
         self._send(404, b"not found", "text/plain")
 
@@ -555,8 +473,6 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8731)
     ap.add_argument("--bind", default="0.0.0.0",
                     help="0.0.0.0 才能被 Kindle 访问；127.0.0.1 只给自己看")
-    ap.add_argument("--poll-hint", default="1",
-                    help="设备取图间隔（分钟），只用于页面上那句话")
     ap.add_argument("--auto-build", type=int, default=AUTO_BUILD_MINUTES,
                     help=f"电脑开着时每隔几分钟自动出一张（0 = 关，默认 {AUTO_BUILD_MINUTES}）")
     args = ap.parse_args()
@@ -569,7 +485,6 @@ def main() -> int:
         print("  自动出图：关（屏的新旧完全跟着云端那 3～9 小时走）")
 
     srv = ThreadingHTTPServer((args.bind, args.port), Handler)
-    srv.poll_hint = args.poll_hint            # type: ignore[attr-defined]
     url = f"http://{args.bind}:{args.port}/"
     print(f"局域网快道已启动：{url}")
     print("  本机出图：" + ("可以（和风的凭据已带进这台进程）" if ok_creds

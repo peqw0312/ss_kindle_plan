@@ -56,3 +56,6 @@ docs/device_state.json
 # serve.py 的"本机这张是我亲手出的"标记：运行时状态，不是产物
 # 有这个标记才允许把本机文件发给设备（见 serve.py 的 current_image）
 docs/dashboard.built.json
+
+# 本机出图端的运行时状态（serve.py 读写），不是产物也不是配置
+docs/skin.txt
