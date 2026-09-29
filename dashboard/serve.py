@@ -83,6 +83,37 @@ def cksum_of(path) -> str:
         return ""
 
 
+LOCAL_ENV = ROOT / ".workbuddy" / "_qweather_local.env"
+
+
+def load_local_env() -> None:
+    """把本机的和风凭据带进进程环境，让「立刻出图」在这台电脑上真的能出。
+
+    凭据仍然不进仓库：这个文件在 .workbuddy/ 下，被 `.workbuddy/_*` 那条规则挡着；
+    私钥也不写在里面，只写一个指向 PEM 文件的路径。已经存在的环境变量一律不覆盖 ——
+    命令行里显式带的算数。
+    """
+    try:
+        lines = LOCAL_ENV.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.strip(), v.strip().strip('"').strip("'")
+        if k and v and not os.environ.get(k):
+            os.environ[k] = v
+    # 私钥单独放一个 PEM 文件里（本来就在那儿），这里只把它读成环境变量
+    path = os.environ.pop("QWEATHER_PRIVATE_KEY_FILE", "")
+    if path and not os.environ.get("QWEATHER_PRIVATE_KEY"):
+        try:
+            os.environ["QWEATHER_PRIVATE_KEY"] = (ROOT / path).read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
+
 def can_build() -> tuple[bool, str]:
     """这台电脑能不能现场出**有天气**的图。
 
@@ -454,11 +485,14 @@ def main() -> int:
     except (AttributeError, ValueError):
         pass
 
+    load_local_env()
+    ok_creds, why = can_build()
+
     ap = argparse.ArgumentParser(description="信息屏局域网快道")
     ap.add_argument("--port", type=int, default=8731)
     ap.add_argument("--bind", default="0.0.0.0",
                     help="0.0.0.0 才能被 Kindle 访问；127.0.0.1 只给自己看")
-    ap.add_argument("--poll-hint", default="10",
+    ap.add_argument("--poll-hint", default="1",
                     help="设备取图间隔（分钟），只用于页面上那句话")
     args = ap.parse_args()
 
@@ -466,6 +500,8 @@ def main() -> int:
     srv.poll_hint = args.poll_hint            # type: ignore[attr-defined]
     url = f"http://{args.bind}:{args.port}/"
     print(f"局域网快道已启动：{url}")
+    print("  本机出图：" + ("可以（和风的凭据已带进这台进程）" if ok_creds
+                        else "不行 —— " + why + "；这台只发云端镜像"))
     print(f"  图：{IMAGE}")
     print(f"  设备侧应把 http://<这台电脑的IP>:{args.port}/dashboard.png 放在 DASHBOARD_URLS 第一位")
     if args.bind == "0.0.0.0":

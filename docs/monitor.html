@@ -541,8 +541,9 @@ async function loadTruth() {
     const src = d.src === 'none' ? '没拿到图' : d.src;
     if (d.ok !== '1') { el.textContent = served + `设备 ${mins} 分钟前上报：这一轮没拿到图（来源 ${src}）。屏上还是它上一张成功的。`; return; }
     const same = d.same ? '和本机这张是同一张 ✓' : '和本机这张不一样 —— 屏上那张更旧，按「进入调屏模式」让它 30 秒后来取一班';
+    const every = (S && S.every) || 10;      // 设备多久来取一班，读自 config.sh
     el.textContent = served + ` ${mins} 分钟前上报 · 取自 ${src} · ${same}`
-      + (mins > 20 ? ` · ⚠️ 上报已经隔了 ${mins} 分钟，可能不准（平时每 10 分钟一班）` : '');
+      + (mins > every * 3 ? ` · ⚠️ 上报已经隔了 ${mins} 分钟，可能不准（平时每 ${every} 分钟一班）` : '');
   } catch (e) {
     el.textContent = '问不到本机服务：' + e.message;
   }
@@ -554,7 +555,7 @@ function lanState() {
   const left = Math.max(0, Math.round((LAN.boost_until - Date.now() / 1000) / 60));
   el.textContent = left > 0
     ? `调屏模式进行中：设备每 ${LAN.boost_seconds || 30} 秒来取一次，还剩约 ${left} 分钟`
-    : `平时节奏：设备每 10 分钟来取一次`;
+    : `平时节奏：设备每 ${(S && S.every) || 10} 分钟来取一次`;
 }
 
 async function lanPublish(skin, btn) {
