@@ -5,12 +5,11 @@
 <title>信息屏调试台</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!--
-  这个页面由 build.yml 复制到 screen 分支的根目录，于是它就是 Pages 的首页：
-      https://<用户>.github.io/<仓库>/
-  为什么要它：Kindle 挂在墙上，之前每次想知道"云端到底出了什么图、为什么降级"，
-  都得把设备拔线插电脑、我再去读日志。这个页面把云端那一侧的真相直接摊开——
-  图本身、上次出图时间、用的哪个天气源、五个凭据有没有注入、完整构建日志。
-  它不需要任何服务器，就是浏览器跟 GitHub 要两个公开文件。
+  这个页面**只由电脑上的 dashboard/serve.py 托管**（http://<电脑IP>:8731/）。
+  以前它另有一份挂在 GitHub Pages，两条路两套按钮，把人绕晕过；2026-09-29
+  云端那套按用户要求去掉了，这里只剩一个出处、一套按钮。
+  为什么要它：屏挂在墙上，每次想知道"到底出了什么图、为什么缺一块、下一班
+  什么时候来"，都得把设备拔线插电脑再去读日志。这个页面把真相直接摊开。
 -->
 <style>
   /* 这一页从头到尾是浅色（白卡片 + 浅灰底），所以声明 color-scheme: light。
@@ -96,7 +95,7 @@
   </div>
 
   <div class="card">
-    <b>凭据注入</b><span class="k">（读的是云端那一轮的构建日志，不代表这台电脑；和风要这五个都在，缺任何一个天气那一块会是空的）</span>
+    <b>本机凭据</b><span class="k">（这台电脑上的五个和风变量，只报有没有；缺任何一个天气那一块会是空的，而现在是唯一的出图端）</span>
     <div id="creds" class="k">正在读取…</div>
   </div>
 
@@ -114,25 +113,18 @@
     </p>
   </div>
 
-  <div class="card" id="ghCard">
-    <b>发布</b><span class="k">（把选中的那套设为屏上用的；约 1 分钟出图，屏上下一个整点第 10 分取）</span>
+  <div class="card">
+    <b>出图 / 换皮肤</b><span class="k">（本机直接画一张，屏下一班来取；选过哪套会记住，以后每轮都按它出）</span>
     <div class="pub">
       <span>屏上现在：<b id="liveSkin">读取中…</b></span>
-      <span>准备发布：<b id="pickName">（先点上面任意一张）</b></span>
+      <span>准备出：<b id="pickName">（先点上面任意一张；不点就按配置文件那套）</b></span>
     </div>
     <div class="pub">
-      <input id="tok" type="password" placeholder="GitHub fine-grained token（只要本仓库 Actions: write）"
-             autocomplete="off" spellcheck="false">
-      <button id="pubBtn" onclick="publish()">发布</button>
-      <button onclick="forgetToken()">清除本机 token</button>
+      <button id="pubBtn" onclick="publish()">立刻出图</button>
+      <button onclick="lanBoost(this)">进入调屏模式 30 分钟</button>
     </div>
-    <div id="lanBox" hidden></div>
     <p class="k" id="pubMsg"></p>
-    <p class="k">
-      token 只存在<b>这台浏览器的 localStorage</b>，由页面直接发给 GitHub 官方接口，
-      不经过任何第三方（跨域已实测允许）。换浏览器或清缓存要重填一次；
-      想反悔随时在 GitHub → Settings → Developer settings → Fine-grained tokens 撤销。
-    </p>
+    <p class="k" id="lanState"></p>
   </div>
 
   <div class="card">
@@ -146,19 +138,13 @@
 </div>
 
 <script>
-const OWNER = "peqw0312", REPO = "ss_kindle_plan", BRANCH = "screen";
-const API = `https://api.github.com/repos/${OWNER}/${REPO}`;
-// 默认取 Pages 那份。认出局域网服务之后会改指向本机 /dashboard.png ——
-// 那里由 serve.py 现算"当前该上屏的那一张"，和答给设备的是同一个判断，
-// 所以这台页面上看到的 == 墙上那张；调试时看错图比看慢更害人。
-let IMG = `https://${OWNER}.github.io/${REPO}/dashboard.png`;
-const CLOUD_CONSOLE = `https://${OWNER}.github.io/${REPO}/`;
-let WALL = "";   // 皮肤墙的出处：局域网模式下仍指 Pages（本机没有 skins/）
+// 一律相对路径：这个页面和 serve.py 同源，而 serve.py 就是唯一的出图端。
+// 页面里那个 <img> 和屏上取的是**同一个 URL、同一次判断**（见 serve.py 的
+// current_image），所以"调试台上看到的"和"墙上那张"必然一致 —— 这一条是用户
+// 反复要过的：看错图比看慢更害人。
+const IMG = "/dashboard.png";
 
-// 图片每 60 秒换一次。必须带一次性参数：Pages 边缘缓存约 10 分钟，
-// 不加的话这里看到的会比 Kindle 实际拿到的更旧，反而误导。
-// 本机模式下这个地址是 /dashboard.png，由 serve.py 决定发"当前该上屏的那一张"
-// （本机刚出的，否则云端镜像）—— 所以这里看到的和设备取到的是同一次判断的结果。
+// 每 60 秒换一次，带一次性参数：不加的话浏览器会拿缓存那张，屏上早就换了。
 // previewing 为真时**不要**去覆盖 #shot —— 否则用户点开的预览会被自动刷新打回去，
 // 看起来就像"点了没反应"。
 let previewing = false;
@@ -236,8 +222,7 @@ function backToLive() {
 // 参数从设备那份 config.sh 现读，不在这里抄第二份 —— 抄一份就会在改了设备
 // 之后继续显示旧时刻表。算法照 aistatus.sh 的 minutes_until_next_fetch() 抄，
 // 包括"安静期跨过午夜"那种写法。
-const SCHED_URL = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main`
-                + `/kindle/extensions/aistatus/config.sh`;
+const SCHED_URL = "/config.sh";     // serve.py 直接给本机那份（拷进屏的就是它）
 let S = null;
 
 function quietHour(h) {
@@ -307,11 +292,11 @@ async function load(showLog) {
   await loadImage();
   let logText = "";
   try {
-    const r = await fetch(`${API}/contents/build.log?ref=${BRANCH}`,
-                          { headers: { Accept: "application/vnd.github.raw+json" } });
-    logText = r.ok ? await r.text() : `（读不到 build.log，HTTP ${r.status}）`;
+    const r = await fetch(`/build.log?t=${Date.now()}`, { cache: 'no-store' });
+    logText = r.ok ? await r.text() : `（读不到本机出图日志，HTTP ${r.status}）`;
+    if (!logText.trim()) logText = "（这台服务还没出过图 —— 按一次「立刻出图」就有了）";
   } catch (e) {
-    logText = `（取 build.log 失败：${e}）`;
+    logText = `（取本机出图日志失败：${e}。serve.py 是不是没在跑？）`;
   }
   document.getElementById('log').textContent = logText;
 
@@ -323,32 +308,34 @@ async function load(showLog) {
     srcEl.className = /和风/.test(m[1]) ? "ok" : "warn";
   } else srcEl.textContent = "日志里没有";
 
-  const q = logText.match(/行情源\s*(\S+)/);
+  const q = logText.match(/行情源\s*([a-z]+)/);
   document.getElementById('qsrc').textContent = q ? q[1] : "—";
 
-  // 凭据注入：build.yml 每次出图前会打五行 ✓/✗。只报有没有，值永远不会出现在这里。
-  const creds = [...logText.matchAll(/\[凭据\]\s*(.)\s*(QWEATHER_\w+)/g)];
-  const box = document.getElementById('creds');
-  if (!creds.length) {
-    box.innerHTML = '<span class="warn">日志里没有凭据自检行 —— 这次构建用的还是旧版工作流</span>';
-  } else {
-    box.innerHTML = creds.map(([, flag, name]) =>
-      `<div class="${flag.trim() === '✓' ? 'ok' : 'bad'}">${flag.trim() === '✓' ? '✓' : '✗'} ${name}</div>`
-    ).join("");
+  // 凭据：问本机服务"这五个在不在"。只报有没有，值永远不会经过这个页面。
+  try {
+    const st = await (await fetch(`/status?t=${Date.now()}`, { cache: 'no-store' })).json();
+    const c = st.creds || {};
+    document.getElementById('creds').innerHTML =
+      Object.keys(c).map(k => `<div class="${c[k] ? 'ok' : 'bad'}">${c[k] ? '✓' : '✗'} ${k}</div>`).join("")
+      + (st.can_build && st.can_build.ok ? '' : '<div class="bad">出不了有天气的图：'
+         + (st.can_build ? st.can_build.why : '问不到') + '</div>');
+  } catch (e) {
+    document.getElementById('creds').innerHTML =
+      '<span class="warn">连不上本机服务，问不到凭据</span>';
   }
 
-  // 上次出图时间：screen 分支只有一个提交（每次覆盖），它就是最近一次构建
+  // 上次出图时间：现在只有本机这一份，直接问 serve.py 那张文件的落地时间
   try {
-    const r = await fetch(`${API}/commits?sha=${BRANCH}&per_page=1`);
-    const c = (await r.json())[0];
-    const when = new Date(c.commit.committer.date);
-    document.getElementById('built').textContent = when.toLocaleString('zh-CN');
-    const mins = Math.round((Date.now() - when) / 60000);
-    const ageEl = document.getElementById('age');
-    ageEl.textContent = mins < 60 ? `${mins} 分钟` : `${(mins / 60).toFixed(1)} 小时`;
-    // GitHub 的定时任务会被合并延迟，超过 4 小时才标红 —— 别把正常现象当故障
-    ageEl.className = mins > 240 ? "bad" : (mins > 90 ? "warn" : "ok");
-  } catch (e) { /* API 偶尔限流，留着上一次的数字就行 */ }
+    const st = await (await fetch(`/status?t=${Date.now()}`, { cache: 'no-store' })).json();
+    if (st.mtime) {
+      document.getElementById('built').textContent = st.mtime;
+      const mins = Math.round((Date.now() - new Date(st.mtime.replace(' ', 'T')).getTime()) / 60000);
+      const ageEl = document.getElementById('age');
+      ageEl.textContent = mins < 60 ? `${mins} 分钟` : `${(mins / 60).toFixed(1)} 小时`;
+      // 自动出图每 10 分钟一轮：超过两轮没动就是它死了，标红给人看
+      ageEl.className = mins > 60 ? "bad" : (mins > 25 ? "warn" : "ok");
+    }
+  } catch (e) { /* 服务没起，留着上一次的数字就行 */ }
 
   if (showLog) document.querySelector('details').open = true;
 }
@@ -358,10 +345,8 @@ async function load(showLog) {
 // 生成的，但拼字符串这种写法一旦哪天数据里混进尖括号，页面就自己烂掉了。
 async function loadWall() {
   const box = document.getElementById('wall');
-  document.getElementById('switch').href =
-    `https://github.com/${OWNER}/${REPO}/actions/workflows/build.yml/dispatch`;
   try {
-    const r = await fetch(`${WALL}/skins/manifest.json?t=${Math.floor(Date.now() / 60000)}`);
+    const r = await fetch(`/skins/manifest.json?t=${Math.floor(Date.now() / 60000)}`);
     if (!r.ok) throw new Error(String(r.status));
     const m = await r.json();
     box.textContent = '';
@@ -373,12 +358,12 @@ async function loadWall() {
       img.loading = 'lazy';
       img.alt = s.name;
       img.title = '点一下 = 预览并选中（不发布）';
-      img.src = `${WALL}/skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
+      img.src = `/skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
       img.onclick = () => { previewSkin(s.name, s.label || s.name); selectSkin(s.name, s.label || s.name); };
       const cap = document.createElement('figcaption');
       cap.textContent = (s.label || s.name) + (s.current ? ' · 屏上' : '');
       const zoom = document.createElement('a');
-      zoom.href = `${WALL}/skins/${s.file}`;
+      zoom.href = `/skins/${s.file}`;
       zoom.target = '_blank';
       zoom.textContent = ' 原图';
       cap.appendChild(zoom);
@@ -388,14 +373,14 @@ async function loadWall() {
     SKINS = (m.skins || []).map(x => x.name);
     for (const s of (m.skins || [])) add(s);
   } catch (e) {
-    box.textContent = '还没有皮肤墙（云端那一步没跑，或者 screen 分支上还没发布 skins/）';
+    box.textContent = '还没有皮肤墙（按一次「立刻出图」就会顺手生成 docs/skins/）';
   }
 }
 
-// ---- 发布 -----------------------------------------------------------------
-// 静态页要往 GitHub 写，唯一的路是带着用户自己的 token 直接调官方接口。
-// token 存 localStorage（本机、这个域名下），不进 URL、不进任何日志。
-const TOK_KEY = 'ss_kindle_plan_gh_token';
+// ---- 出图 / 换皮肤 --------------------------------------------------------
+// 只有本机这一条路：POST /publish，serve.py 跑同一段 generate.py（约 1 秒），
+// 屏下一班来取。以前这里还有一份"带用户 token 直接调 GitHub 触发 Actions"的
+// 发布，2026-09-29 随云端一起删掉了。
 let picked = null;
 
 function setMsg(text, cls) {
@@ -417,122 +402,51 @@ async function loadLiveSkin() {
   try {
     const r = await fetch(`skin.txt?t=${Date.now()}`);
     const v = (await r.text()).trim();
-    el.textContent = v ? `${v}` : '（按 config.yaml 的默认那套）';
+    el.textContent = v ? v : '（配置文件那套）';
   } catch (e) {
-    el.textContent = '读不到';
+    el.textContent = '读不到本机服务';
   }
 }
 
-async function publish() {
-  const tok = (document.getElementById('tok').value || '').trim();
-  if (!tok) { setMsg('先填 token。', 'bad'); return; }
-  if (!picked) { setMsg('先在墙上点一张，选中了才能发布。', 'bad'); return; }
-  localStorage.setItem(TOK_KEY, tok);          // 用户按了发布 = 同意记住
-  const btn = document.getElementById('pubBtn');
-  btn.disabled = true;
-  setMsg(`正在触发：${picked} …`);
-  try {
-    const r = await fetch(
-      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/build.yml/dispatches`,
-      { method: 'POST', mode: 'cors',
-        headers: { 'Authorization': 'Bearer ' + tok, 'content-type': 'application/json',
-                   'accept': 'application/vnd.github+json' },
-        body: JSON.stringify({ ref: 'main', inputs: { skin: picked } }) });
-    if (r.status === 401) throw new Error('token 无效或已撤销（401）');
-    if (r.status === 403) throw new Error('这个 token 对这个仓库没有 Actions: write（403）');
-    if (r.status === 404) throw new Error('找不到仓库或工作流（404）');
-    if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
-    setMsg(`已触发 ${picked}。约 1 分钟出图；屏上下一个整点第 10 分来取。`, 'ok');
-    setTimeout(loadLiveSkin, 90000);           // 等这轮跑完再回读
-  } catch (e) {
-    setMsg('发布失败：' + e.message, 'bad');
-  }
-  btn.disabled = false;
+function publish() {
+  lanPublish(picked || '', document.getElementById('pubBtn'));
 }
 
-function forgetToken() {
-  localStorage.removeItem(TOK_KEY);
-  document.getElementById('tok').value = '';
-  setMsg('已清除本机 token。');
-}
-
-// 局域网模式：这个页面被电脑上的 serve.py 托管时，同源就能直接调本机接口，
-// 不需要 token、也不经过 GitHub。判断方法很土但可靠 —— /poll.json 只有那个
-// 服务有，Pages 上取是 404。
-// 为什么非要在本机页面做：Pages 那份是 HTTPS，去调 http://192.168.x.x 会被
-// 浏览器按混合内容拦掉，这是规则，不是写法问题。
+// 这个页面必须由 serve.py 托管（同源才调得动本机接口）。判断方法很土但可靠：
+// /poll.json 只有那个服务有。取不到就是被当成文件双击打开了 —— 那时按钮一个都
+// 不好使，必须说出来，别让人对着没反应的按钮找原因。
 let LAN = null;
 
-async function detectLan() {
-  const box = document.getElementById('lanBox');
+async function initLocal() {
+  const el = document.getElementById('lanState');
   try {
     const r = await fetch(`/poll.json?t=${Date.now()}`, { cache: 'no-store' });
-    if (!r.ok) { loadTruth(); return; }
+    if (!r.ok) throw new Error(String(r.status));
     const j = await r.json();
-    if (typeof j.boost_until !== 'number') { loadTruth(); return; }
+    if (typeof j.boost_until !== 'number') throw new Error('返回的不是本机服务的样子');
     LAN = j;
-    IMG = "/dashboard.png";   // 墙上的图走相对路径，由本机服务代理（见 serve.py 的 /skins/）
-    loadImage();              // 立刻换过去：不然这一分钟里页面看的是 Pages 那张、设备拿的是本机那张
-  } catch (e) { loadTruth(); return; }
-  box.hidden = false;
-  box.innerHTML = '';
-  const tip = document.createElement('p');
-  tip.className = 'k';
-  tip.textContent = '这是局域网控制台（本机）。设备每来取一次，这里就发"当前该上屏的那一张"。';
-  box.appendChild(tip);
-  let stInfo = null;
-  try { stInfo = await (await fetch(`/state?t=${Date.now()}`, { cache: 'no-store' })).json(); } catch (e) {}
-  LAN.state = stInfo;
-  const canBuild = !!(stInfo && stInfo.can_build && stInfo.can_build.ok);
-  const row = document.createElement('div');
-  row.className = 'pub';
-  if (canBuild) {
-    for (const name of (SKINS.length ? SKINS : ['c1', 'arc'])) {
-      const b = document.createElement('button');
-      b.textContent = `立刻出 ${name}`;
-      b.onclick = () => lanPublish(name, b);
-      row.appendChild(b);
-    }
-  } else {
-    // 按下去只会失败的按钮就别摆在这儿：和风的 Key 只在 GitHub Secrets 里，本机出的
-    // 图会缺整个天气块。这种图不发（serve.py 已经把住了），所以入口也不给。
-    const p = document.createElement('p');
-    p.className = 'k';
-    p.textContent = (stInfo && stInfo.can_build && stInfo.can_build.why) || '问不到本机服务，不知道能不能出图';
-    p.appendChild(document.createElement('br'));
-    const a = document.createElement('a');
-    a.href = CLOUD_CONSOLE; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = '云端调试台';
-    p.appendChild(document.createTextNode('本机出不了有天气的图，换内容或换皮肤请用 '));
-    p.appendChild(a);
-    p.appendChild(document.createTextNode('（跑一轮 GitHub，约 1 分钟；这台电脑关着也不影响）。'));
-    box.appendChild(p);
+  } catch (e) {
+    if (el) el.textContent = '连不上本机的 serve.py（' + e.message
+      + '）。这个页面要开 http://<电脑IP>:8731/ ，不能双击文件打开。';
+    loadTruth();
+    return;
   }
-  const boost = document.createElement('button');
-  boost.textContent = '进入调屏模式 30 分钟';
-  boost.onclick = () => lanBoost(boost);
-  row.appendChild(boost);
-  box.appendChild(row);
-  document.getElementById('ghCard').hidden = canBuild;
-  const st = document.createElement('p');
-  st.className = 'k';
-  st.id = 'lanState';
-  box.appendChild(st);
+  try { LAN.state = await (await fetch(`/state?t=${Date.now()}`, { cache: 'no-store' })).json(); } catch (e) {}
   lanState();
-  loadTruth();     // 成功分支也要问一次：上面几条 return 只覆盖了失败的情况
+  loadTruth();
 }
 
 async function loadTruth() {
   const el = document.getElementById('truth');
   if (!LAN) {
-    el.textContent = '这台是 Pages 那份，问不到设备（设备只肯把状态报给局域网里的电脑）。'
-      + '要"看到的就等于墙上那张"，请开 http://192.168.31.158:8731/。';
+    el.textContent = '连不上本机服务，问不到屏上贴的是哪张（屏只认这台电脑）。';
     return;
   }
   try {
     const r = await fetch(`/state?t=${Date.now()}`, { cache: 'no-store' });
     const j = await r.json();
     LAN.state = j;
+    lanState();          // 实测节奏和这条用的是同一份 /state，一起刷
     const d = j.device;
     // 先把"这台电脑会发哪一张"说清楚：快道可能正在镜像云端，而不是硬盘上那个文件
     const served = `本机发的是${j.served || '？'}${j.note ? ' —— ' + j.note : ''}。`;
@@ -556,26 +470,27 @@ function lanState() {
   // 报"实测隔多久来一班"，不报"每 N 秒一班"：后者是个承诺，而设备心跳的下限
   // 是它自己那份脚本说了算 —— 曾经调试台喊"每 30 秒"，设备实际 66 秒。
   const seen = LAN.state && LAN.state.device_seen;
-  const real = seen && seen.ago != null
-    ? `上一班 ${seen.gap || '?'} 秒前来取（${seen.ago} 秒前）`
-    : '还没看到设备来取过图';
+  const real = !seen || seen.ago == null
+    ? '还没看到屏来取过图'
+    : (seen.gap ? `上一班隔 ${seen.gap} 秒来一班 · ${seen.ago} 秒前来过`
+                : `${seen.ago} 秒前来取过（刚重启，还没量到间隔）`);
   el.textContent = (left > 0 ? `调屏模式进行中，还剩约 ${left} 分钟 · ` : '') + real;
 }
 
 async function lanPublish(skin, btn) {
-  const el = document.getElementById('lanState');
   const old = btn.textContent;
   btn.disabled = true; btn.textContent = '出图中…';
-  if (el) el.textContent = '正在本机出图…';
+  setMsg('正在本机出图…');
   try {
     const r = await fetch(`/publish?skin=${encodeURIComponent(skin)}`, { method: 'POST' });
     const j = await r.json();
-    if (el) el.textContent = (j.ok ? '✓ ' : '✗ ') + j.msg;
-    if (j.ok) { loadImage(); setTimeout(loadWall, 3000); }
+    setMsg((j.ok ? '✓ ' : '✗ ') + j.msg, j.ok ? 'ok' : 'bad');
+    // 屏上现在哪套要立刻回读：不读的话这行字会停在 3 分钟，让人以为没生效
+    if (j.ok) { loadImage(); loadLiveSkin(); load(); setTimeout(loadWall, 3000); }
     fetch(`/poll.json?t=${Date.now()}`, { cache: 'no-store' })
       .then(x => x.json()).then(j2 => { LAN = j2; lanState(); loadTruth(); });
   } catch (e) {
-    if (el) el.textContent = '请求失败：' + e.message;
+    setMsg('请求失败：' + e.message + ' —— serve.py 是不是没在跑？', 'bad');
   }
   btn.disabled = false; btn.textContent = old;
 }
@@ -589,19 +504,15 @@ async function lanBoost(btn) {
 }
 
 document.getElementById('note').textContent =
-  "刷新：图 60 秒一次，日志 3 分钟一次。GitHub 的整点任务会被延迟，" +
-  "「距今」超过 4 小时才算真卡住。";
-// token 只从本机 localStorage 回填，绝不写进页面源码或 URL。
-const savedTok = localStorage.getItem(TOK_KEY);
-if (savedTok) document.getElementById('tok').value = savedTok;
+  "刷新：图 60 秒一次，日志 3 分钟一次。这台电脑是唯一的出图端 —— " +
+  "它停了屏就停在最后一张，不会自己找别的源。";
 
 load();
 loadWall();
 loadSchedule();
 loadLiveSkin();
-detectLan();          // 它自己会在结论出来后调 loadTruth，别在这里抢跑
-setInterval(loadTruth, 60000);
-setInterval(lanState, 60000);
+initLocal();          // 它自己会在结论出来后调 loadTruth，别在这里抢跑
+setInterval(loadTruth, 60000);      // 它顺手刷 lanState
 setInterval(loadImage, 60000);
 setInterval(load, 180000);
 setInterval(loadWall, 1800000);

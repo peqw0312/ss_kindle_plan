@@ -59,7 +59,8 @@ DEBUG = ROOT / "docs" / "debug.json"
 # 并在日志里说清可选值，不会静默画错。
 LAYOUTS = ("c1", "arc")
 
-STATE = {"last_build": None, "last_error": None, "skin": None, "seconds": None}
+STATE = {"last_build": None, "last_error": None, "skin": None, "seconds": None,
+         "log": ""}          # 上一轮出图的完整输出，调试台的日志面板读它
 
 SKINS = ROOT / "docs" / "skins"                  # 皮肤墙：本机出的那几张真图
 SKIN_STATE = ROOT / "docs" / "skin.txt"          # 屏上现在挂哪套版式（没人选过=空）
@@ -118,6 +119,19 @@ def load_local_env() -> None:
             os.environ["QWEATHER_PRIVATE_KEY"] = (ROOT / path).read_text(encoding="utf-8").strip()
         except Exception:
             pass
+
+
+QWEATHER_VARS = ("QWEATHER_HOST", "QWEATHER_ISS", "QWEATHER_SUB",
+                 "QWEATHER_KID", "QWEATHER_PRIVATE_KEY")
+
+
+def creds_state() -> dict:
+    """这台电脑上五个和风凭据各在不在。**只报有没有，值永远不出去**。
+
+    以前这一块读的是云端构建日志里的 ✓/✗ 五行；现在云端没了，再看那份日志
+    就只会得到"没有自检行"。所以直接问进程环境。
+    """
+    return {k: bool((os.environ.get(k) or "").strip()) for k in QWEATHER_VARS}
 
 
 def can_build() -> tuple[bool, str]:
@@ -247,6 +261,7 @@ def build(skin: str | None) -> tuple[bool, str]:
         STATE["last_error"] = f"{type(exc).__name__}: {exc}"
         return False, STATE["last_error"]
     STATE["seconds"] = round(time.time() - t0, 1)
+    STATE["log"] = (res.stdout or "") + (res.stderr or "")
     if res.returncode != 0:
         tail = (res.stderr or res.stdout or "").strip().splitlines()[-3:]
         STATE["last_error"] = " / ".join(tail) or f"退出码 {res.returncode}"
@@ -364,6 +379,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send(404, b"no config.sh", "text/plain")
             return
+        if path == "/build.log":
+            # 上一轮出图的原样输出。云端那套去掉之后，"到底跑了什么"只剩这一份。
+            self._send(200, STATE["log"].encode("utf-8"), "text/plain; charset=utf-8")
+            return
         if path == "/report":
             # 设备上报"屏上现在贴的是哪张"。GET 带参数就行：设备那边只有 curl，
             # 让它发 POST + JSON 是给自己找麻烦。
@@ -411,6 +430,9 @@ class Handler(BaseHTTPRequestHandler):
             info["image"] = str(IMAGE)
             info["exists"] = IMAGE.exists()
             info["empty"] = empty_reason()
+            info["creds"] = creds_state()
+            ok_c, why_c = can_build()
+            info["can_build"] = {"ok": ok_c, "why": why_c}
             info["skin"] = (SKIN_STATE.read_text(encoding="utf-8").strip()
                             if SKIN_STATE.exists() else "")
             if IMAGE.exists():
@@ -477,6 +499,12 @@ def main() -> int:
                     help=f"电脑开着时每隔几分钟自动出一张（0 = 关，默认 {AUTO_BUILD_MINUTES}）")
     args = ap.parse_args()
 
+    if ok_creds:
+        # 起来就先出一张。电脑重启之后屏是"停着的那张"，等第一轮自动出图最多要
+        # 一个间隔；现在这台是唯一出图端，那段时间没有任何东西会替它补上。
+        import threading
+        threading.Thread(target=lambda: print(
+            f"  [启动出图] {build(chosen_skin())[1]}", file=sys.stderr), daemon=True).start()
     if args.auto_build > 0:
         import threading
         threading.Thread(target=auto_build_loop, args=(args.auto_build,), daemon=True).start()
