@@ -305,6 +305,19 @@ def build(skin: str | None) -> tuple[bool, str]:
     return True, f"已出图（{STATE['seconds']}s）"
 
 
+def wall_is_stale() -> bool:
+    """皮肤墙缺不缺、是不是比当前这张旧。缺一次就会让人以为"没有预览"。"""
+    m = SKINS / "manifest.json"
+    if not m.exists() or not IMAGE.exists():
+        return True
+    return m.stat().st_mtime < IMAGE.stat().st_mtime
+
+
+def ensure_wall() -> None:
+    if wall_is_stale():
+        rebuild_wall()
+
+
 def rebuild_wall() -> None:
     """刷新皮肤墙（docs/skins/）。只在**手动**按「立刻出图」之后跑。
 
@@ -533,8 +546,10 @@ def main() -> int:
         # 起来就先出一张。电脑重启之后屏是"停着的那张"，等第一轮自动出图最多要
         # 一个间隔；现在这台是唯一出图端，那段时间没有任何东西会替它补上。
         import threading
-        threading.Thread(target=lambda: print(
-            f"  [启动出图] {build(chosen_skin())[1]}", file=sys.stderr), daemon=True).start()
+        def _boot():
+            print(f"  [启动出图] {build(chosen_skin())[1]}", file=sys.stderr)
+            ensure_wall()          # 皮肤墙缺一次，调试台那格就是空的
+        threading.Thread(target=_boot, daemon=True).start()
     if args.auto_build > 0:
         import threading
         threading.Thread(target=auto_build_loop, args=(args.auto_build,), daemon=True).start()

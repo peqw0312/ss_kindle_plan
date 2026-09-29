@@ -355,7 +355,8 @@ async function loadWall() {
       fig.dataset.name = s.name;
       if (s.current) fig.classList.add('cur');
       const img = document.createElement('img');
-      img.loading = 'lazy';
+      // 不用 loading=lazy：整面墙就两张，懒加载换来的收益是零，
+      // 代价是"窗口小 / 标签页在后台"时浏览器干脆不去取，看起来就是没有预览。
       img.alt = s.name;
       img.title = '点一下 = 预览并选中（不发布）';
       img.src = `/skins/${s.file}?t=${Math.floor(Date.now() / 60000)}`;
@@ -373,7 +374,9 @@ async function loadWall() {
     SKINS = (m.skins || []).map(x => x.name);
     for (const s of (m.skins || [])) add(s);
   } catch (e) {
-    box.textContent = '还没有皮肤墙（按一次「立刻出图」就会顺手生成 docs/skins/）';
+    box.textContent = '还没读到皮肤墙（docs/skins/）。按一次「立刻出图」就会生成；'
+      + '这一格 20 秒后自己再试一次。';
+    setTimeout(loadWall, 20000);
   }
 }
 
