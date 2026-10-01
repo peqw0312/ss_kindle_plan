@@ -712,6 +712,18 @@ sleep_to_next_tick() {
     secure_sleep "$left"
 }
 
+# 上/撤一个 RTC 闹钟（写 0 = 清空）。单独抽出来是因为下面那条"不主动休眠"的
+# 路也必须上闹钟 —— 见 secure_sleep 里那段 2026-10-01 的实测。
+arm_wake() {
+    [ -n "$RTC" ] && [ -w "$RTC" ] || return 0
+    echo 0 >"$RTC" 2>/dev/null
+    [ "${1:-0}" -gt 0 ] || return 0
+    case "$RTC_KIND" in
+        wakealarm)     echo "+$1" >"$RTC" 2>/dev/null ;;   # 新内核：相对秒数要带 +
+        wakeup_enable) echo "$1"  >"$RTC" 2>/dev/null ;;   # 老内核：裸秒数
+    esac
+}
+
 # 睡一段时间。USE_RTC_SLEEP=1 时设备真正断电休眠，靠 RTC 叫醒。
 secure_sleep() {
     duration="$1"
@@ -797,13 +809,21 @@ secure_sleep() {
             done
         fi
     else
-        # 退化为普通 sleep：设备不会真正休眠，耗电大，但一定能醒
+        # 普通 sleep。⚠️ 这里原来写着"一定能醒"，是错的，而且错得很隐蔽：
+        # 2026-10-01 实测屏 22:11 那一班干完之后，23:10 那一班**日志一个字都没留**，
+        # 一个多小时没醒。原因是"我们不主动 `echo mem`"不等于"设备不挂起"——
+        # 是 powerd 按自己的空闲计时器把它 suspend 的；而一旦不走上面那条分支，
+        # 就没有人再往 wakealarm 里写闹钟，于是挂起之后没有任何东西叫得醒它。
+        # 也就是说：为了"反正插着电，别睡了"而关掉休眠，反而比省电模式更容易死睡。
+        # 修法：闹钟照样上，只是不主动断电。被 powerd 挂起后靠这条闹钟叫回来。
+        arm_wake "$duration"
         elapsed=0
         while [ "$elapsed" -lt "$duration" ]; do
-            [ -f "$STOP_FLAG" ] && return 0
+            [ -f "$STOP_FLAG" ] && { arm_wake 0; return 0; }
             sleep 10
             elapsed=$((elapsed + 10))
         done
+        arm_wake 0
     fi
 }
 

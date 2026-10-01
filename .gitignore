@@ -59,3 +59,16 @@ docs/dashboard.built.json
 
 # 本机出图端的运行时状态（serve.py 读写），不是产物也不是配置
 docs/skin.txt
+
+# 2026-10-01 上云时的传输中转垃圾（base64 分块、tar 包、探针），
+# 全是可再生的中间产物，进仓库就是 1.5MB 噪音 + 一份代码副本
+.workbuddy/chunks/
+.workbuddy/c[0-9]/
+.workbuddy/*.b64
+.workbuddy/*.tar.gz
+.workbuddy/serve_chunks.json
+.workbuddy/t.txt
+
+# 上云那次传输入的中转物 + 从屏上清下来的崩溃转储备份，都不进仓库
+.workbuddy/kpp_crash_backup/
+*.crlf-bak

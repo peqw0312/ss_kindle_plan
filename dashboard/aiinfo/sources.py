@@ -17,7 +17,7 @@ import os
 import re
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlencode
@@ -458,16 +458,21 @@ def _fetch_weather_qweather(cfg) -> dict | None:
         daytime = d.get("daytime") or {}
         start = str(d.get("forecastStartTime") or "")[:10]
         try:
-            delta = (datetime.strptime(start, "%Y-%m-%d").date() - today_date).days
+            day_date = datetime.strptime(start, "%Y-%m-%d").date()
+            delta = (day_date - today_date).days
         except ValueError:
+            day_date = today_date + timedelta(days=i)
             delta = i
-        label = {0: "今天", 1: "明天"}.get(delta) or (
-            WEEKDAYS[datetime.strptime(start, "%Y-%m-%d").weekday()] if len(start) == 10 else f"D{i}")
         d_text = str(_q_num(daytime, "condition", "text") or "")
         pop = _q_num(daytime, "precipitation", "probability")
         astro = d.get("astro") or {}
         forecast.append({
-            "label": label,
+            # 标签只写周几。**隔几天**交给下面的 delta，版式按它决定背景分档。
+            # 以前"今天/明天"是写在 label 里的，于是想改成只显示周几就会连带
+            # 断掉两处按 label 认今天的地方（昨天存档、arc 的上色）。
+            "label": WEEKDAYS[day_date.weekday()],
+            "date": day_date.isoformat(),
+            "delta": delta,
             "desc": d_text,
             "icon": qweather_icon(d_text),
             "high": _round(_q_num(d, "temperatureMax", "value")),
@@ -524,7 +529,7 @@ def _fetch_weather_qweather(cfg) -> dict | None:
     now_hm = datetime.now().strftime("%H:%M")
     is_day = 1 if (not sunrise or not sunset or sunrise <= now_hm < sunset) else 0
     return {
-        "source": "和风天气",
+        "source": WEATHER_SOURCE_LABEL,
         "obs_time": cur.get("forecastStartTime") or cur.get("observationTime"),
         "temp": _round(_q_num(cur, "temperature", "value")),
         "feels": _round(_q_num(cur, "feelsLike", "value")),
@@ -565,7 +570,7 @@ def fetch_weather(cfg) -> dict | None:
         print(f"[sources] weather.provider={provider!r} 不认识，本项目只用和风。")
     result = _fetch_weather_qweather(cfg)
     if result:
-        result["source"] = "和风天气"
+        result["source"] = WEATHER_SOURCE_LABEL
     return result
 
 
@@ -798,10 +803,11 @@ _PROVIDERS = {
 CRYPTO_PREFIX = "bitget:"
 
 #: 记录本轮实际用的是哪家行情，渲染层会在行情区块下面标出来
+#: 屏幕上的加密来源名（2026-10-01 与行情/天气一起改成英文）。
 CRYPTO_SOURCE_LABELS = {
-    "bitget": "Bitget 合约",
-    "gate": "Gate 合约",
-    "htx": "HTX 合约",
+    "bitget": "Bitget Perp",
+    "gate": "Gate Perp",
+    "htx": "HTX Perp",
 }
 
 #: 合约行情都是小 JSON，8 秒足够；给太长会让一个被墙的源拖垮整轮生成
@@ -1004,8 +1010,13 @@ def fetch_quotes(cfg) -> list[dict]:
     return out
 
 
+#: 屏幕上写的天气来源名。**这是显示用的，不是判断用的** ——
+#  识别输入时接受的别名（qweather / hefeng / 和风）在 fetch_weather 里，别混。
+WEATHER_SOURCE_LABEL = "QWeather"
+
 #: 屏幕上写得好看的行情来源名。页脚那行以前写死"腾讯"，换源之后会说谎。
-QUOTE_SOURCE_LABELS = {"tencent": "腾讯", "sina": "新浪", "yahoo": "Yahoo"}
+#  2026-10-01 按用户要求改成英文（正常大小写，不用全大写缩写）。
+QUOTE_SOURCE_LABELS = {"tencent": "Tencent", "sina": "Sina", "yahoo": "Yahoo"}
 
 
 def quotes_source_label(quotes: list[dict]) -> str:
@@ -1025,7 +1036,7 @@ def crypto_source_label(quotes: list[dict]) -> str:
     label = " + ".join(sorted(CRYPTO_SOURCE_LABELS.get(u, u) for u in used))
     # 不是 Bitget 就说明主力源这一轮没通，如实写出来，免得以为是 Bitget 的报价
     if "bitget" not in used:
-        label += "（Bitget 不可达）"
+        label += " (Bitget unreachable)"
     return label
 
 

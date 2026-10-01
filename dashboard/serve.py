@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import os
 import subprocess
@@ -54,10 +55,12 @@ CONFIG = ROOT / "dashboard" / "config.yaml"
 GEN = ROOT / "dashboard" / "generate.py"
 DEBUG = ROOT / "docs" / "debug.json"
 
-# 和 render.py 的 Renderer.LAYOUTS 对齐。这里抄一份是因为不想为了三个名字
+# 和 render.py 的 Renderer.LAYOUTS 对齐。这里抄一份是因为不想为了这几个名字
 # 在设备/服务两侧都依赖导入生产代码；对不上的话 generate.py 自己会退回默认
 # 并在日志里说清可选值，不会静默画错。
-LAYOUTS = ("c1", "arc")
+# 带（c1）2026-10-01 封存：它按位置认"今天"，昨天那一格插到最前面之后会把昨天
+# 加粗成今天。绘制代码还在 render.py，这里摘掉就不再出现在皮肤墙和 ?skin= 上。
+LAYOUTS = ("arc",)
 
 STATE = {"last_build": None, "last_error": None, "skin": None, "seconds": None,
          "log": ""}          # 上一轮出图的完整输出，调试台的日志面板读它
@@ -104,7 +107,10 @@ def load_local_env() -> None:
     try:
         lines = LOCAL_ENV.read_text(encoding="utf-8").splitlines()
     except Exception:
-        return
+        # 这个文件不在不代表没凭据：systemd 的 EnvironmentFile（云端部署）已经把它们
+        # 注入进程环境了。以前这里直接 return，会连下面"Do 私钥文件 → 环境变量"那步
+        # 一起跳过 —— 结果是四个凭据全在、只有私钥永远读不到，屏幕上永远没有天气块。
+        lines = []
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -124,6 +130,29 @@ def load_local_env() -> None:
 
 QWEATHER_VARS = ("QWEATHER_HOST", "QWEATHER_ISS", "QWEATHER_SUB",
                  "QWEATHER_KID", "QWEATHER_PRIVATE_KEY")
+
+
+def read_token() -> str:
+    """调试台的口令，从环境变量 DASH_TOKEN 读。空 = 不设防（局域网那套老行为）。
+
+    为什么要有这个东西：2026-10-01 上云之后，服务直接挂在公网 IP 的 80 端口上，
+    **谁都能访问**。`/status` 会把整轮出图的日志原样吐出来（里面有天气数据、
+    抓取耗时、失败信息），`/state` 还带设备上报的哈希。凭据倒是不会漏
+    （creds_state() 只报布尔值，PEM 也不在任何路由里），但"把家里的天气和
+    出图日志广播给全网"没有任何理由。
+
+    保护哪些：只保护**给人看的日志类**接口（/status /state /build.log）。
+    设备侧那两个（/report /poll.json）和拉图（/dashboard.png）故意不保护 ——
+    Kindle 只带得动一个 URL 参数，而且图本身不含敏感信息；给它们加口令
+    还要把口令写进设备的 config.sh，多一处泄漏面换不到什么。
+
+    传法：HTTP 头 `X-Dash-Token: <口令>` 或查询串 `?k=<口令>`。
+    加查询串是为了能从浏览器地址栏直接打开调试台的那几个 JSON。
+    """
+    return (os.environ.get("DASH_TOKEN") or "").strip()
+
+
+PROTECTED = ("/status", "/state", "/build.log")
 
 
 def creds_state() -> dict:
@@ -357,6 +386,21 @@ def auto_build_loop(minutes: int) -> None:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _token_ok(self) -> bool:
+        """这一趟带的口令对不对。没设 DASH_TOKEN 就一律放行（局域网/本机调试）。
+
+        两边都收：头优先（脚本、curl 用着干净），查询串兜底（浏览器地址栏直接
+        打开那几个 JSON 时只有这条路）。比较用 hmac.compare_digest —— 普通 ==
+        会随第一个不同的字符提前返回，理论上能把口令一个字符一个字符试出来。
+        """
+        want = read_token()
+        if not want:
+            return True
+        got = (self.headers.get("X-Dash-Token") or "").strip()
+        if not got:
+            got = ((parse_qs(urlparse(self.path).query).get("k") or [""])[0]).strip()
+        return hmac.compare_digest(got, want)
+
     def _send(self, code: int, body: bytes, ctype: str, no_store: bool = True) -> None:
         self.send_response(code)
         self.send_header("content-type", ctype)
@@ -374,6 +418,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path in PROTECTED and not self._token_ok():
+            # 认不出来只回 404，不回 401：401 等于告诉扫描器"这里有个需要口令的
+            # 东西"，而 404 让它和一堆不存在的路径看起来一模一样。
+            self._send(404, b"not found", "text/plain")
+            return
         if path == "/dashboard.png":
             # 必须 no-store：设备每来一次都要拿到真的，缓存一层就白改了
             body, src, note = current_image()

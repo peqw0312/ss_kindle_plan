@@ -16,7 +16,7 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -145,15 +145,15 @@ def yesterday_archive(data: dict, path, today) -> None:
     screen 分支；下一轮先读回来，日期不是今天的那份就是昨天。
 
     ⚠️ 它是"前一天最后一次预报的日极值"，不是气象站实测。这个区别必须写在这，
-      因为屏幕上只写着「昨天 34°/23°」，看不出区别。
-      没有这个文件（第一天、或云端从没跑过）就没有这一格 —— 绝不拿今天凑。
+      因为屏幕上那一格只写着周几 + 温度，靠**灰底**表示它是昨天，看不出数据是存的。
+      没有这个文件（第一天、或存档日期不是昨天）就没有这一格 —— 绝不拿今天凑。
 
     ⚠️ 存档是**两格**的（yesterday + today）。以前只有一格，每出一张就把"昨天"
       覆盖掉 —— 于是这一格只在当天第一轮存在，下午就凭空消失，看起来像"版式又
       变了"。换日时把上一轮的 today 滚成 yesterday，今天的数每轮刷新。
 
-    这一格是**插进 forecast 最前面**的，不是各版式自己拼：这样所有皮肤（c1、arc，
-    以及以后加的）自动都有，不用一处一处补。
+    这一格是**插进 forecast 最前面**的，不是各版式自己拼：这样每套皮肤自动都有，
+    不用一处一处补。它带 `delta: -1`，版式按 delta 上色，不按位置猜。
     """
     from pathlib import Path
     import json as _json
@@ -179,17 +179,33 @@ def yesterday_archive(data: dict, path, today) -> None:
     if isinstance(yst, dict) and yst.get("date") == today_iso:
         yst = None                        # 被今天的数污染过，宁可不画也不画错
 
+    def _date_of(slot):
+        try:
+            return datetime.strptime(str((slot or {}).get("date", ""))[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    # 「昨天」得真的是昨天。电脑关几天，滚出来的那份是好几天前的，而它在屏幕上站的
+    # 位置就是"昨天"。标签现在只剩周几，过期那份会一眼对不上，但对不上不等于说清楚了
+    # —— 这一格宁可不画。
+    yst_date = _date_of(yst)
+    if yst_date is not None and yst_date != today.date() - timedelta(days=1):
+        print(f"[昨天] 存档是 {yst_date} 的，不是昨天，这一格不画")
+        yst = None
+
     if isinstance(yst, dict) and yst.get("high") is not None:
-        entry = {"label": "昨天", "date": yst.get("date", ""),
+        entry = {"label": sources.WEEKDAYS[yst_date.weekday()] if yst_date else "昨天",
+                 "date": yst.get("date", ""), "delta": -1,
                  "desc": yst.get("desc", ""), "icon": yst.get("icon", "cloud"),
                  "high": yst.get("high"), "low": yst.get("low"),
                  "precip": None, "uv": None, "pop": None,
-                 "source": "和风天气（前一天存档）"}
+                 "source": "QWeather (previous day archive)"}
         wx["yesterday"] = entry
         wx["forecast"] = [entry] + list(wx.get("forecast") or [])
 
     # 存今天：优先用逐日预报里"今天"那一格（它才是日极值），拿不到就用实况兜一下
-    day = next((f for f in (wx.get("forecast") or []) if f.get("label") == "今天"), None)
+    # 按 delta 认，不按 label —— label 现在四格都是周几。
+    day = next((f for f in (wx.get("forecast") or []) if f.get("delta") == 0), None)
     high = (day or {}).get("high")
     if high is None:
         return
@@ -219,8 +235,8 @@ def main() -> int:
                         help="「昨天」存档文件：先读它（日期不是今天就当昨天用），"
                              "再把今天的高低温写回它。云端把它发布到 screen 分支。")
     parser.add_argument("--layout", default=None,
-                        help="临时用哪套版式（bands / poster / c1 …），不改配置文件。"
-                             "云端「Run workflow」那个下拉就是把它传进来的。")
+                        help=f"临时用哪套版式（现在可切换的只有：{' / '.join(Renderer.LAYOUTS)}；"
+                             "bands / poster / c1 已封存，代码还在 render.py），不改配置文件。")
     args = parser.parse_args()
 
     config_path = resolve(args.config)

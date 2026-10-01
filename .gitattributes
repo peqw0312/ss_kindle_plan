@@ -4,6 +4,13 @@
 * text=auto eol=lf
 
 *.sh text eol=lf
+# ⚠️ 下面两个文件名必须写成"路径形式"，光靠上面的 *.sh 不够：
+#    规则只在文件「重新 checkout」时才生效；工作区里早就存在的文件，
+#    Git 不会主动改写它的换行符。所以改了 .sh 之后要手动确认一遍 CR 字节数为 0。
+#    2026-10-01 实际翻过车：config.sh 源文件一直是 CRLF（253 个 CR），
+#    但 Git Bash 的 `grep -c $'\r'` 会做换行符转换、误报成 0，一直没被发现。
+#    查 CR 要用原始字节数：ReadAllBytes 里数 0x0D。
+kindle/extensions/aistatus/config.sh text eol=lf
 # 这个文件会被 Kindle 上的 sh 直接 source，CRLF 会让 CLOCK_X 变成 "644\r"
 kindle/extensions/aistatus/clock/clock.conf text eol=lf
 *.png binary

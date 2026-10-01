@@ -495,26 +495,25 @@ def lay_terminal(sh, d, y, extra=0):
             30, 28, GRAY, "din", 12)
     y += nh + 16 + e[4]
 
-    # 预报：反相那格 = 今天，它前一格（昨天）用 130 灰底，其余白底。
-    # ⚠️ 出稿那版是按位置写死的（第 0 格=昨天、第 1 格=今天），因为它自己塞了一条
-    #   假昨天。生产里没有假数据，第一格常常就是今天 —— 再按位置认会把"明天"
-    #   高亮成今天，所以这里改成按标签找。
-    fc = wx["fc"][:4]
+    # 这一排的读法全在背景上：昨天=130 灰底、今天=黑底反白、明天/后天=白底黑框。
+    # 文字只写周几，所以哪格是哪天**只能问数据里的 delta**，不能按位置猜
+    # （出稿那版按位置写死过，c1 那条 `today = i == 0` 就是这么把昨天高亮成今天的），
+    # 也不能按标签文字找 —— 标签现在四格都是周几。
+    fc = wx["fc"]
     n = len(fc)
     if n == 0:                       # 天气整个没拿到：不画空行，也别除零
         return y
-    today = next((i for i, c in enumerate(fc) if str(c[0]).startswith("今天")), None)
     pitch = CW // n
     mix(sh, M, y, y + 34, "WEATHER", "近日天气", 28, 26, INK, "din", 10)
     y += 40
     ch = 164
-    for i, (day, ik, desc, hi, lo) in enumerate(fc):
+    for i, (day, ik, desc, hi, lo, delta) in enumerate(fc):
         x0 = M + i * pitch
         x1c = x0 + pitch - 12
-        if i == today:
+        if delta == 0:
             notch(sh, x0, y, x1c, y + ch, 14, 3, INK, INK)
             fg, fg2, bgc = PAPER, LIGHT, INK
-        elif today is not None and i == today - 1:
+        elif delta == -1:
             notch(sh, x0, y, x1c, y + ch, 14, 3, GRAY, GRAY)
             fg, fg2, bgc = INK, INK, GRAY
         else:
@@ -566,18 +565,31 @@ def _cells(wx: dict) -> list[tuple[str, str]]:
     return out
 
 
-def _forecast(wx: dict) -> list[tuple[str, str, str, str, str]]:
-    """近日天气：(标签, 图标, 描述, 高, 低)。
+def _forecast(wx: dict) -> list[tuple[str, str, str, str, str, int]]:
+    """近日天气：(标签, 图标, 描述, 高, 低, 隔几天)。
+
+    固定要的是**昨天 / 今天 / 明天 / 后天**这四格，按 forecast 里的 `delta` 取，
+    不是盲切前四格。以前写的是 `[:4]`，于是"昨天"那格有没有存档会让这一排
+    探到第几天悄悄变一天 —— 少一格没人喊，多一格就把后天挤掉。
+    存档过期（不是昨天）时 generate.py 那一格干脆不插，这里就少画一格。
 
     「昨天」那一格由 generate.py 的 `yesterday_archive()` **直接插在 forecast 最前面**，
     所有版式共用同一份数据 —— 以前是这里自己拼的，于是只有 arc 有、c1 没有，
     用户问的"皮肤都加上这个功能"就是被这个不对称坑到的。
     读不到存档就没有这一格，**绝不拿今天的数凑**（出稿那版塞的是假昨天，已废弃）。
     """
+    src = list(wx.get("forecast") or [])
+    known = [f for f in src if isinstance(f.get("delta"), int)]
+    if known:
+        by_delta = {f["delta"]: f for f in known}
+        picked = [(d, by_delta[d]) for d in (-1, 0, 1, 2) if d in by_delta]
+    else:
+        # 设计稿手搓的假数据没有 delta：按位置当 今天/明天/… 用，别让这一排整个消失
+        picked = list(enumerate(src[:4]))
     return [(str(f.get("label", "")), str(f.get("icon", "cloud")),
              clean_text(f.get("desc", ""), 8),
-             f'{f.get("high", "--")}°', f'{f.get("low", "--")}°')
-            for f in (wx.get("forecast") or [])[:4]]
+             f'{f.get("high", "--")}°', f'{f.get("low", "--")}°', delta)
+            for delta, f in picked]
 
 
 def arc_data(cfg, data: dict) -> dict:
@@ -603,17 +615,17 @@ def arc_data(cfg, data: dict) -> dict:
                               str(cfg.get("device.model", "")))
     mid = [f"Kindle {label}"]
     if wx.get("source"):
-        mid.append(f"天气 {wx['source']}")
+        mid.append(f"Weather {wx['source']}")
     # 注意传**原始** quotes：上面那个局部变量已经变成 (名字, 价格, 涨跌) 的元组列表，
     # 里面没有 provider。
     qs = quotes_source_label(data.get("quotes") or [])
     if qs and cfg.get("quotes.enabled", True):
-        mid.append(f"行情 {qs}")
+        mid.append(f"Quotes {qs}")
     # 昨天那格是"前一天最后一次预报的日极值"（和风自己的存档），不是气象站实测。
     # 屏幕上只写着「昨天 34°/23°」看不出区别，所以在这里说明来源。只在真画了才标。
     y = wx.get("yesterday") or {}
     if y.get("high") is not None:
-        mid.append(y.get("source") or "昨天 和风存档")
+        mid.append(y.get("source") or "Yesterday archive")
 
     fc = _forecast(wx)
     return {

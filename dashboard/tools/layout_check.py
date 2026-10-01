@@ -46,11 +46,20 @@ WEATHER = {
     "pressure": 1010, "vis": 23, "uv": 7,
     "air": {"level": "轻度污染", "aqi": 118},
     "warning": [],
+    # 和生产的 forecast 条目同形：label 只写周几，**隔几天靠 delta**，
+    # arc 按 delta 选 昨天/今天/明天/后天 并决定背景分档。
+    # 这里少了 delta 就会走按位置的兜底路径，量的就不是屏上那条了。
     "forecast": [
-        {"label": "今天", "high": 30, "low": 23, "icon": "sun_cloud", "desc": "多云"},
-        {"label": "明天", "high": 31, "low": 24, "icon": "rain", "desc": "小雨"},
-        {"label": "后天", "high": 28, "low": 22, "icon": "cloud", "desc": "阴"},
-        {"label": "周日", "high": 27, "low": 21, "icon": "sun", "desc": "晴"},
+        {"label": "周一", "delta": -1, "date": "2026-09-28",
+         "high": 32, "low": 25, "icon": "rain", "desc": "阵雨"},
+        {"label": "周二", "delta": 0, "high": 30, "low": 23, "icon": "sun_cloud",
+         "desc": "多云"},
+        {"label": "周三", "delta": 1, "high": 31, "low": 24, "icon": "rain",
+         "desc": "小雨"},
+        {"label": "周四", "delta": 2, "high": 28, "low": 22, "icon": "cloud",
+         "desc": "阴"},
+        {"label": "周五", "delta": 3, "high": 27, "low": 21, "icon": "sun",
+         "desc": "晴"},
     ],
 }
 

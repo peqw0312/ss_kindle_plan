@@ -46,9 +46,14 @@ def main() -> int:
     args = ap.parse_args()
 
     safe_stdout()
+    # 本机凭据：serve.py 调它时环境是继承的，单独在命令行跑就没有 ——
+    # 没有和风的 Key 它照样"成功"，出一墙没有天气的图。那种预览比没有预览更坏，
+    # 因为墙上每一格看着都像成品。
+    import serve                                       # noqa: E402
+    serve.load_local_env()
     cfg_path = generate.resolve(args.config)
     cfg = Config.load(str(cfg_path) if cfg_path else None)
-    current = str(cfg.get("style.layout", "bands") or "bands").lower()
+    current = str(cfg.get("style.layout", Renderer.LAYOUTS[0]) or Renderer.LAYOUTS[0]).lower()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -60,10 +65,11 @@ def main() -> int:
     # 这种预览和成品不一致最难查，因为两边都没报错。
     generate.yesterday_archive(data, args.yesterday, data["generated_at"])
 
-    # 版式名单以 Renderer.LAYOUTS 为准。这里留兜底常量是因为 render.py 正被另一个人
-    # 同时改、我那半个改动还没提交 —— 等它落地就把这两行删掉。
-    layouts = getattr(Renderer, "LAYOUTS", None) or ("bands", "poster", "c1")
-    labels = getattr(Renderer, "LAYOUT_LABELS", None) or {}
+    # 版式名单以 Renderer.LAYOUTS 为唯一来源。原来这里留过一个兜底常量
+    # （("bands","poster","c1")），注释写着"等 render.py 那半个改动落地就删"——
+    # 它早就落地了，留着就成了第二份名单，摘掉 c1 的时候这份会把它又摆回墙上。
+    layouts = Renderer.LAYOUTS
+    labels = Renderer.LAYOUT_LABELS
 
     skins = []
     for name in layouts:

@@ -161,7 +161,9 @@ WEATHER_SPLIT = 0.46
 DEVICE_LABELS = {
     "kindle_pw1": "Paperwhite 1",
     "kindle_pw2": "Paperwhite 2",
-    "kindle_pw3": "Paperwhite 3",
+    # 屏上写的是亚马逊对外的叫法，不是我们的内部代号 —— 用户认"第七代"，
+    # 不认"PW3"。内部 id（kindle_pw3，决定 1072×1448 那套预设）不能跟着改。
+    "kindle_pw3": "Paperwhite (7th Generation)",
     "kindle_pw4": "Paperwhite 4",
     "kindle_pw5": "Paperwhite 5",
     "kindle_basic": "Kindle 基础版",
@@ -242,12 +244,13 @@ def wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int,
 
 
 class Renderer:
-    #: 有哪些版式，以及给人看的名字。皮肤墙、云端下拉、报错提示都以这里为准。
-    #: 条带（bands）和帖（poster）2026-09-26 从可切换里摘掉了 —— 屏上只有
-    #: 两套在用：带（c1）和信息终端（arc）。绘制代码暂时留着（layout_check 和
-    #: 一些工具还引用它们），要彻底删是另一次改动。
-    LAYOUTS = ("c1", "arc")
-    LAYOUT_LABELS = {"c1": "带（四条分带 + 大图标预报）",
+    #: 有哪些版式，以及给人看的名字。皮肤墙、调试台那个下拉、报错提示都以这里为准。
+    #: 条带（bands）和帖（poster）2026-09-26 从可切换里摘掉了；带（c1）2026-10-01
+    #: 摘掉 —— 它按位置认"今天"（`today = i == 0`），昨天那一格插到最前面之后
+    #: 它把昨天加粗成今天，用户决定先封存、以后再说。
+    #: 绘制代码都留着（layout_check 和一些工具还引用它们），要彻底删是另一次改动。
+    LAYOUTS = ("arc",)
+    LAYOUT_LABELS = {"c1": "带（四条分带 + 大图标预报）· 已封存",
                      "arc": "信息终端（工业军规 · 线稿图标）"}
 
     def __init__(self, cfg, data: dict):
@@ -266,11 +269,11 @@ class Renderer:
         for name, base in _BASE_SIZES.items():
             setattr(self, name, chosen.get(name, base))
 
-        # 版式引擎的清单只有一个来源：下面这个类属性。皮肤墙和云端那个下拉都从
-        # 它取，别再在第二处抄一遍名单 —— 抄两遍迟早对不上。
-        # （唯一抄第二遍的地方：build.yml 里 workflow_dispatch 的 options，那是
-        #  GitHub 要求写死的静态列表，加版式时记得同步。）
-        self.layout = str(cfg.get("style.layout", "c1") or "c1").lower()
+        # 版式引擎的清单只有一个来源：下面这个类属性。皮肤墙和调试台的「立刻出图」
+        # 都从它取。唯一抄第二遍的地方是 serve.py 顶上的 LAYOUTS —— 那边要在起进程
+        # 之前就校验 ?skin=，导入生产代码不合适，对不上时 generate.py 会自己退回默认
+        # 并在日志里说清可选值。
+        self.layout = str(cfg.get("style.layout", "arc") or "arc").lower()
         if self.layout not in self.LAYOUTS:
             self._notes.append(f"style.layout「{self.layout}」不在可切换列表里，"
                                f"已退回「{self.LAYOUTS[0]}」。可选：{' / '.join(self.LAYOUTS)}")
@@ -1374,10 +1377,10 @@ class Renderer:
         weather = self.data.get("weather") or {}
         bits = [f"更新 {self.generated_at.strftime('%m-%d %H:%M')}", f"Kindle {label}"]
         if weather.get("source"):
-            bits.append(f"天气 {weather['source']}")
+            bits.append(f"Weather {weather['source']}")
         qs = quotes_source_label(self.data.get("quotes") or [])
         if qs:
-            bits.append(f"行情 {qs}")
+            bits.append(f"Quotes {qs}")
         # 涨跌图例从行情标题挪到页脚，信息不丢，行情那块省下一整行
         bits.append("实心=涨 空心=跌")
         font = self.f(self.FS_FOOT)
@@ -1684,10 +1687,10 @@ class Renderer:
         weather = self.data.get("weather") or {}
         mid = [f"Kindle {label}"]
         if weather.get("source"):
-            mid.append(f"天气 {weather['source']}")
+            mid.append(f"Weather {weather['source']}")
         qs = quotes_source_label(self.data.get("quotes") or [])
         if qs and self.cfg.get("quotes.enabled", True):
-            mid.append(f"行情 {qs}")
+            mid.append(f"Quotes {qs}")
         self.text((M, y + self.px(14)),
                   f"更新 {self.generated_at.strftime('%m-%d %H:%M')}", font, GRAY)
         self.text((X1, y + self.px(14)), "实心=涨 空心=跌", font, GRAY, anchor="ra")
