@@ -474,11 +474,15 @@ function lanState() {
   const left = Math.max(0, Math.round((LAN.boost_until - Date.now() / 1000) / 60));
   // 报"实测隔多久来一班"，不报"每 N 秒一班"：后者是个承诺，而设备心跳的下限
   // 是它自己那份脚本说了算 —— 曾经调试台喊"每 30 秒"，设备实际 66 秒。
+  // device_seen 只按 User-Agent 认 curl —— 而服务器上、你自己电脑上，
+  // 随手一次 curl 也是 curl。所以它只能说"有 curl 来过"，不能说"屏来过"。
+  // 2026-10-01 就是被这一条骗过：云上记的 curl/8.21.0 其实是 Windows 自带的那个。
+  // 真正能证明屏活着的只有 /report（只有屏会带参数来报），那是上面真值卡那一行。
   const seen = LAN.state && LAN.state.device_seen;
   const real = !seen || seen.ago == null
-    ? '还没看到屏来取过图'
-    : (seen.gap ? `上一班隔 ${seen.gap} 秒来一班 · ${seen.ago} 秒前来过`
-                : `${seen.ago} 秒前来取过（刚重启，还没量到间隔）`);
+    ? '还没人来取过图'
+    : (seen.gap ? `有 curl 来过：上一趟隔 ${seen.gap} 秒 · ${seen.ago} 秒前（是不是屏，看上面真值卡）`
+                : `${seen.ago} 秒前有人来取过（刚重启，还没量到间隔）`);
   el.textContent = (left > 0 ? `调屏模式进行中，还剩约 ${left} 分钟 · ` : '') + real;
 }
 
